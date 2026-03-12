@@ -1,0 +1,9 @@
+node_modules/
+.claude/
+*.zip
+*.recovered
+temp.scad
+.DS_Store
+.env
+dist/
+build/

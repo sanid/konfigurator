@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="bs">
+
+<head>
+   <meta charset="UTF-8">
+   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+   <title>Meco Konfigurator 2026</title>
+   <link rel="stylesheet" href="src/styles.css">
+   <script type="importmap">
+{
+"imports": {
+"three": "./node_modules/three/build/three.module.js",
+"three/addons/": "./node_modules/three/examples/jsm/",
+"@jscad/modeling": "./node_modules/@jscad/modeling/dist/jscad-modeling.min.js"
+}
+}
+</script>
+   <script src="node_modules/jspdf/dist/jspdf.umd.min.js"></script>
+   <script src="node_modules/jspdf-autotable/dist/jspdf.plugin.autotable.min.js"></script>
+   <script src="node_modules/@jscad/modeling/dist/jscad-modeling.min.js"></script>
+   <script>
+      if (!window.jscadModeling) {
+         if (typeof require !== 'undefined') {
+            window.jscadModeling = require('@jscad/modeling');
+         } else if (typeof module !== 'undefined' && module.exports) {
+            window.jscadModeling = module.exports;
+         }
+      }
+   </script>
+</head>
+
+<body class="light">
+   <!-- Custom Title Bar -->
+   <div class="titlebar" id="titlebar">
+      <div class="titlebar-drag">
+         <div class="app-icon">⬡</div>
+         <span class="app-title">Meco Konfigurator <span class="version">2026</span></span>
+      </div>
+      <div class="titlebar-controls">
+         <button id="btn-theme" title="Toggle light/dark mode">☁️ Dark</button>
+         <button class="tb-btn" id="btn-minimize" title="Minimize">&#x2014;</button>
+         <button class="tb-btn" id="btn-maximize" title="Maximize">&#x25A1;</button>
+         <button class="tb-btn close" id="btn-close" title="Close">&#x2715;</button>
+      </div>
+   </div>
+   <!-- Main Layout -->
+   <div class="app-layout">
+      <!-- LEFT PANEL: Module Selector + Parameters -->
+      <aside class="panel panel-left">
+         <div class="panel-header">
+            <span class="panel-title">MODULI</span>
+         </div>
+         <!-- Category Tabs -->
+         <div class="tabs" id="category-tabs">
+            <button class="tab active" data-cat="Donji">Donji</button>
+            <button class="tab" data-cat="Ugaoni">Ugaoni</button>
+            <button class="tab" data-cat="Gornji">Gornji</button>
+            <button class="tab" data-cat="Visoki">Visoki</button>
+         </div>
+         <!-- Module Grid -->
+         <div class="module-grid-wrapper">
+            <div id="module-grid" class="module-grid">
+               <!-- populated by JS -->
+            </div>
+         </div>
+         <!-- Parameters Scroll Area -->
+         <div class="params-header">
+            <span class="panel-title">PARAMETRI <small>(cm)</small></span>
+         </div>
+         <div class="params-scroll" id="params-container">
+            <div class="params-empty">Izaberi modul za parametre</div>
+         </div>
+         <!-- Drawer Slider Type -->
+         <div class="field-group" style="margin-top:8px;">
+            <label class="field-label">Tip klizača</label>
+            <div class="select-wrapper">
+               <select id="klizac-select">
+                  <option value="skriveni">Skriveni</option>
+                  <option value="teleskopski">Teleskopski</option>
+               </select>
+            </div>
+         </div>
+         <!-- Add Button -->
+         <button class="btn btn-success btn-large" id="btn-add">
+            <span>＋</span> DODAJ U PLAN
+         </button>
+         <!-- Special Elements -->
+         <div class="btn-row" style="margin-top:6px;">
+            <button class="btn btn-wood flex-1" id="btn-radna">＋ RADNA PLOČA</button>
+            <button class="btn btn-steel flex-1" id="btn-cokla">＋ COKLA</button>
+         </div>
+      </aside>
+      <!-- CENTER: 3D Viewer + Wall Grid -->
+      <main class="panel panel-center">
+         <!-- 3D Viewer -->
+         <div class="viewer-wrapper">
+            <div class="viewer-toolbar">
+               <span class="viewer-label">3D PRIKAZ — JSCAD Viewer</span>
+               <div class="viewer-actions">
+                  <button class="icon-btn" id="btn-view-front" title="Pogled spreda">⬜</button>
+                  <button class="icon-btn" id="btn-view-iso" title="Izometrija">◱</button>
+                  <button class="icon-btn" id="btn-view-top" title="Pogled odozgo">⬛</button>
+                  <button class="icon-btn" id="btn-reset-cam" title="Reset kamere">⌂</button>
+               </div>
+            </div>
+            <div id="viewer-canvas-wrap">
+               <canvas id="three-canvas"></canvas>
+               <div
+                  style="position:absolute; top:12px; left:12px; z-index:100; display:flex; flex-direction:column; gap:8px;">
+                  <button id="btn-toggle-light" class="icon-btn" title="Toplo/Hladno osvjetljenje"
+                     style="background:var(--bg-panel); width:34px; height:34px; border-radius:var(--radius); border:1px solid var(--border); color:var(--text-primary); cursor:pointer; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px);">💡</button>
+
+                  <div style="position:relative;">
+                     <button id="btn-toggle-prikaz" class="icon-btn" title="Prikaz elemenata"
+                        style="background:var(--bg-panel); width:34px; height:34px; border-radius:var(--radius); border:1px solid var(--border); color:var(--text-primary); cursor:pointer; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px);">👁️</button>
+
+                     <div id="prikaz-popover" class="hidden"
+                        style="position:absolute; left:44px; top:0; background:var(--bg-panel); border:1px solid var(--accent); border-radius:var(--radius); padding:12px; width:260px; box-shadow:0 10px 30px rgba(0,0,0,0.3); backdrop-filter:blur(8px);">
+                        <div
+                           style="font-size:9px; font-weight:800; letter-spacing:1px; color:var(--text-secondary); margin-bottom:10px; text-transform:uppercase;">
+                           PRIKAZ ELEMENATA</div>
+                        <div class="toggles-grid" id="toggles-grid"
+                           style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+                           <!-- Generated by JS -->
+                        </div>
+                     </div>
+
+                     <div style="position:relative;">
+                        <button id="btn-add-fixture" class="icon-btn"
+                           title="Dodaj element zida (voda, struja, prozor...)"
+                           style="background:var(--bg-panel); width:34px; height:34px; border-radius:var(--radius); border:1px solid var(--border); color:var(--text-primary); cursor:pointer; display:flex; align-items:center; justify-content:center; backdrop-filter:blur(4px); font-size:16px; font-weight:700;">&#x2297;</button>
+
+                        <!-- Fixture Popover -->
+                        <div id="fixture-popover" class="hidden"
+                           style="position:absolute; left:44px; top:0; background:var(--bg-panel); border:1px solid var(--accent); border-radius:var(--radius); padding:14px; width:300px; box-shadow:0 10px 30px rgba(0,0,0,0.3); backdrop-filter:blur(8px); display:flex; flex-direction:column; gap:10px;">
+                           <div
+                              style="font-size:9px; font-weight:800; letter-spacing:1px; color:var(--text-secondary); text-transform:uppercase; margin-bottom:2px;">
+                              DODAJ ELEMENT ZIDA</div>
+
+                           <div class="field-group">
+                              <label class="field-label">Tip elementa</label>
+                              <div class="select-wrapper">
+                                 <select id="fixture-type-select"></select>
+                              </div>
+                           </div>
+
+                           <div class="field-group">
+                              <label class="field-label">Oznaka (opcionalno)</label>
+                              <input type="text" id="fixture-label-input" class="text-input"
+                                 placeholder="npr. Sudopera, &#352;poret...">
+                           </div>
+
+                           <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; align-items: end;">
+                              <div class="field-group">
+                                 <label class="field-label"
+                                    style="height: 24px; display: flex; align-items: flex-end;">X &mdash; od lijevog
+                                    ruba (cm)</label>
+                                 <input type="number" id="fixture-x-input" class="num-input" value="0" step="1" min="0">
+                              </div>
+                              <div class="field-group">
+                                 <label class="field-label"
+                                    style="height: 24px; display: flex; align-items: flex-end;">Y &mdash; od poda
+                                    (cm)</label>
+                                 <input type="number" id="fixture-y-input" class="num-input" value="90" step="1"
+                                    min="0">
+                              </div>
+                           </div>
+
+                           <div id="fixture-dims-row" style="display:grid; grid-template-columns:1fr 1fr; gap:8px;"
+                              class="hidden">
+                              <div class="field-group">
+                                 <label class="field-label">&Scaron;irina (cm)</label>
+                                 <input type="number" id="fixture-width-input" class="num-input" value="80" step="1"
+                                    min="10">
+                              </div>
+                              <div class="field-group">
+                                 <label class="field-label">Visina (cm)</label>
+                                 <input type="number" id="fixture-height-input" class="num-input" value="120" step="1"
+                                    min="10">
+                              </div>
+                           </div>
+
+                           <button class="btn btn-success" id="modal-fixture-add" style="width:100%;">＋
+                              Dodaj</button>
+
+                           <div id="fixture-list-wrap" style="max-height:200px; overflow-y:auto;"></div>
+                        </div>
+                     </div>
+
+                  </div>
+               </div>
+               <div class="viewer-hint">Drži lijevo dugme za rotaciju · Skrola za zoom · Drži desno za pomak</div>
+               <div id="price-overlay">
+                  <div
+                     style="font-size:9px; font-weight:700; color:var(--text-secondary); letter-spacing:1px; margin-bottom:2px;">
+                     UKUPNA CIJENA MATERIJALA</div>
+                  <div id="price-total" style="font-size:22px; font-weight:800; color:var(--green);">0.00 €</div>
+                  <div id="price-total-rsd"
+                     style="font-size:12px; font-weight:600; color:var(--text-secondary); opacity:0.8;">0 RSD</div>
+               </div>
+
+               <!-- Wall Grid (Moved to Overlay) -->
+               <div class="wall-grid-panel" id="wall-grid-panel">
+                  <div class="wall-grid-header">
+                     <div style="display:flex; align-items:center; gap: 10px;">
+                        <span class="panel-title">VIZUELNI ZID</span>
+                        <label class="pin-label" title="Fiksiraj panel">
+                           <input type="checkbox" id="pin-wall-grid">
+                           <span>Fiksiraj</span>
+                        </label>
+                     </div>
+                     <div style="display:flex;align-items:center;gap:12px;">
+                        <span class="wall-hint">→ Pravac ugradnje</span>
+                        <button id="btn-toggle-wall-grid" class="grid-toggle-btn">▲</button>
+                     </div>
+                  </div>
+                  <div id="wall-grid-content" class="wall-grid-content">
+                     <div class="wall-grid-wrap" id="wall-grid">
+                        <!-- Generated by JS -->
+                     </div>
+                  </div>
+               </div>
+            </div>
+         </div>
+      </main>
+      <!-- RIGHT PANEL: Materials, Toggles, Position, Plan -->
+      <aside class="panel panel-right">
+         <!-- Client Name -->
+         <div class="field-group">
+            <label class="field-label">KLIJENT / PROJEKAT</label>
+            <input type="text" id="client-name" class="text-input" value="Projekat_Meco" placeholder="Ime projekta">
+
+            <!-- Save / Load project relocated here -->
+            <div class="btn-row" style="margin-top:6px;">
+               <button class="btn btn-success flex-1" id="btn-save-project"
+                  style="gap:6px; padding: 6px 10px; font-size: 10px;">
+                  💾 Sačuvaj
+               </button>
+               <button class="btn flex-1" id="btn-load-project"
+                  style="gap:6px; border:1px solid var(--accent); color:var(--accent); padding: 6px 10px; font-size: 10px;">
+                  📂 Učitaj
+               </button>
+            </div>
+         </div>
+         <!-- Materials -->
+         <div class="section-header">MATERIJALI</div>
+         <div class="materials-grid" id="materials-grid">
+            <!-- Generated by JS -->
+         </div>
+
+         <div id="prices-panel-wrap" style="margin-top:2px;">
+            <button class="btn btn-block" id="btn-toggle-prices"
+               style="width:100%; justify-content:space-between; font-size:10px; letter-spacing:1px;">
+               <span>CIJENE MATERIJALA</span>
+               <span>💰</span>
+            </button>
+         </div>
+         <!-- Prices Modal / Collapsible Section -->
+         <div id="prices-panel" class="hidden"
+            style="background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:10px; margin-top:5px;">
+            <div
+               style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; border-bottom:1px solid var(--border); padding-bottom:4px;">
+               <div style="font-size:10px; font-weight:700; color:var(--text-secondary);">CIJENE MATERIJALA (€ / m²)
+               </div>
+               <div style="font-size:9px; color:var(--accent); font-weight:600;">1 € = 117 RSD</div>
+            </div>
+            <div class="position-grid" style="grid-template-columns: 1fr 1fr; gap:6px; margin-bottom:10px;">
+               <label>Univer <input type="number" id="price-univer" class="num-input" value="25" step="0.5"></label>
+               <label>MDF <input type="number" id="price-mdf" class="num-input" value="45" step="0.5"></label>
+               <label>HDF <input type="number" id="price-hdf" class="num-input" value="12" step="0.5"></label>
+               <label>Radna <input type="number" id="price-radna" class="num-input" value="65" step="0.5"></label>
+            </div>
+            <div
+               style="font-size:10px; font-weight:700; color:var(--text-secondary); margin-bottom:8px; border-bottom:1px solid var(--border); padding-bottom:4px;">
+               KANTOVANJE (m')</div>
+            <div class="position-grid" style="grid-template-columns: 1fr 1fr; gap:6px;">
+               <label>Kant k <input type="number" id="price-kant-k" class="num-input" value="1.5" step="0.1"></label>
+               <label>Kant K <input type="number" id="price-kant-K" class="num-input" value="3.5" step="0.1"></label>
+            </div>
+         </div>
+         <!-- Position -->
+         <div class="section-header">POZICIJA (cm)</div>
+         <div class="position-grid">
+            <label>X <input type="number" id="pos-x" class="num-input" value="0" step="1"></label>
+            <label>Y <input type="number" id="pos-y" class="num-input" value="0" step="1"></label>
+            <label>Z <input type="number" id="pos-z" class="num-input" value="0" step="1"></label>
+            <label>R° <input type="number" id="pos-r" class="num-input rot-input" value="0" step="90"></label>
+         </div>
+         <!-- Plan List -->
+         <div class="section-header" style="display:flex;align-items:center;justify-content:space-between;">
+            <span>PLAN KUHINJE</span>
+            <span class="plan-count" id="plan-count">0 el.</span>
+         </div>
+         <div class="plan-list-wrap">
+            <div id="plan-list" class="plan-list">
+               <div class="plan-empty">Dodaj module u plan</div>
+            </div>
+         </div>
+         <!-- Action Buttons -->
+         <button class="btn btn-danger" id="btn-delete">🗑 OBRIŠI SELEKTOVANO</button>
+         <div class="btn-row" style="margin-top:6px;">
+            <button class="btn btn-warning flex-1" id="btn-krojna">📋 KROJNA</button>
+            <button class="btn btn-info flex-1" id="btn-optimik">📊 OPTIMIK</button>
+         </div>
+         <button class="btn btn-purple" id="btn-pdf" style="margin-top:6px;">📄 IZVEZI PDF PONUDU</button>
+
+      </aside>
+   </div>
+   <!-- Krojna Lista Modal -->
+   <div id="modal-krojna" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-box modal-large">
+         <div class="modal-header">
+            <span>KROJNA LISTA</span>
+            <button class="modal-close" id="modal-krojna-close">✕</button>
+         </div>
+         <div class="modal-body">
+            <div id="krojna-table-wrap"></div>
+         </div>
+         <div class="modal-footer" style="justify-content:space-between;">
+            <label
+               style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:11px; color:var(--text-secondary); user-select:none;">
+               <input type="checkbox" id="krojna-simplified-toggle" style="width:14px; height:14px; cursor:pointer;">
+               Pojednostavljeni prikaz (cm)
+            </label>
+            <div style="display:flex; gap:8px;">
+               <button class="btn btn-info" id="btn-export-krojna-csv">📊 Eksport CSV</button>
+               <button class="btn" id="btn-modal-close">Zatvori</button>
+            </div>
+         </div>
+      </div>
+   </div>
+   <!-- Input Dialog -->
+   <div id="modal-input" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-box">
+         <div class="modal-header">
+            <span id="modal-input-title">Unos</span>
+            <button class="modal-close" id="modal-input-close">✕</button>
+         </div>
+         <div class="modal-body">
+            <p id="modal-input-label"></p>
+            <input type="number" id="modal-input-val" class="text-input" step="0.1">
+         </div>
+         <div class="modal-footer">
+            <button class="btn btn-success" id="modal-input-ok">OK</button>
+            <button class="btn" id="modal-input-cancel">Otkaži</button>
+         </div>
+      </div>
+   </div>
+   <!-- Material Picker Modal -->
+   <div id="modal-material" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-box modal-wide">
+         <div class="modal-header">
+            <span id="modal-mat-title">Izaberi materijal</span>
+            <button class="modal-close" id="modal-mat-close">✕</button>
+         </div>
+         <div class="modal-body">
+            <div class="mat-sections">
+               <div class="mat-section">
+                  <div class="mat-section-title">Boje</div>
+                  <div class="mat-colors-grid" id="mat-colors"></div>
+               </div>
+               <div class="mat-section">
+                  <div class="mat-section-title">Dezeni (drvo / kamen)</div>
+                  <div class="mat-textures-grid" id="mat-textures"></div>
+               </div>
+               <div class="mat-section" style="flex:0 0 auto;">
+                  <div class="mat-section-title">Prilagođena boja</div>
+                  <input type="color" id="mat-custom-color" value="#ffffff"
+                     style="width:80px;height:50px;border:none;cursor:pointer;border-radius:8px;">
+               </div>
+            </div>
+         </div>
+         <div class="modal-footer">
+            <div class="mat-preview-wrap">
+               <div id="mat-preview-swatch" class="mat-preview-swatch"></div>
+               <span id="mat-preview-label">—</span>
+            </div>
+            <button class="btn btn-success" id="modal-mat-ok">Primijeni</button>
+            <button class="btn" id="modal-mat-cancel">Otkaži</button>
+         </div>
+      </div>
+   </div>
+   <script type="module" src="src/app.js"></script>
+</body>
+
+</html>
