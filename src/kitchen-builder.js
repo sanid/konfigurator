@@ -35,21 +35,35 @@ function addBox(group, sx, sy, sz, tx, ty, tz, matKey) {
 }
 
 // ─── Corpus box (shared logic for base cabinets) ──────────────────────────────
-function buildCorpus(group, s, v, d, c, mKorpus, settings) {
+// SCAD: back rail at translate([m1, d-70, v-m1]), front rail at translate([m1, 0, v-m1])
+// frontRailZ override: gola modules use v-6 (v-60mm), regular use v-M1
+function buildCorpus(group, s, v, d, c, mKorpus, settings, frontRailZ) {
+  const frz = frontRailZ !== undefined ? frontRailZ : (v - M1);
   // Left side
   addBox(group, M1, d, v - c, 0, -d, c, mKorpus);
   // Right side
   addBox(group, M1, d, v - c, s - M1, -d, c, mKorpus);
   // Bottom
   addBox(group, s - 2 * M1, d, M1, M1, -d, c, mKorpus);
-  // Top back cross rail (short depth, at -7, height v-M1)
+  // Top back cross rail — SCAD: translate([m1, d-70, v-m1])
   addBox(group, s - 2 * M1, 7, M1, M1, -7, v - M1, mKorpus);
-  // Top front cross rail (full depth, at -d, dropped 5cm from top)
-  addBox(group, s - 2 * M1, 7, M1, M1, -d, v - M1 - 5, mKorpus);
+  // Top front cross rail — SCAD: translate([m1, 0, v-m1]) or translate([m1, 0, v-60]) for gola
+  addBox(group, s - 2 * M1, 7, M1, M1, -d, frz, mKorpus);
   // Back panel (HDF)
   if (settings.pozadina) {
     addBox(group, s, HDF, v - c, 0, 0, c, mKorpus);
   }
+}
+
+// ─── Cokla panel (front plinth board) ─────────────────────────────────────────
+// SCAD: cokla=[s, mdf, c-5] at translate([0, 5, 5]) colored dezen_front
+// In SCAD, Y=0 is front edge, Y=5 means 0.5cm inset from front, MDF thick going backward.
+// In Three.js, front face is at -d, so cokla front is at -(d - 0.5) going MDF toward wall.
+function addCoklaPanel(group, s, c, depth, mFront) {
+  if (c <= 0.5) return;
+  // SCAD: cokla=[s, mdf, c-5] at translate([0, 5, 5])
+  // Three.js: front is at d (wall is at 0), so ty = -(d - 0.5) places it 0.5cm from front
+  addBox(group, s, MDF, c - 0.5, 0, -(depth - 0.5), 0.5, mFront);
 }
 
 
@@ -139,7 +153,8 @@ function build_radni_stol(p, mats, settings) {
   const g = { materials: {} };
   const mK = mats.korpus, mF = mats.front;
 
-  buildCorpus(g, s, v, d, c, mK, settings);
+  // SCAD: front rail at v-m1
+  buildCorpus(g, s, v, d, c, mK, settings, v - M1);
   buildShelves(g, s, v, d, c, brp, mK, settings);
 
   // Doors — SCAD: vrata=[s/brv-3,mdf,v-c-3] @ translate([1.5+i*rasporedi,-d-mdf,c])
@@ -150,16 +165,15 @@ function build_radni_stol(p, mats, settings) {
       const dx = 0.15 + i * (s / brvr);
       addBox(g, dw, MDF, dh, dx, -d - MDF, c, mF);
     }
-    // Handles
-    if (!settings.isGola) {
-      const postavi_rucke = 5 * brvr;
-      for (let j = 0; j < brvr; j++) {
-        addCevastaRucka(g, s / brvr - 5 + j * postavi_rucke, d + MDF, v - 18.6 / 2 - 5);
-      }
+    // Handles — SCAD: translate([s/brv-50+j*postavi_rucke,-mdf,v-186/2-50])
+    const postavi_rucke = 5 * brvr;
+    for (let j = 0; j < brvr; j++) {
+      addCevastaRucka(g, s / brvr - 5 + j * postavi_rucke, d + MDF, v - 18.6 / 2 - 5);
     }
   }
 
-  // Legs
+  // Cokla panel + Legs
+  addCoklaPanel(g, s, c, d, mF);
   addLegs(g, s, c, d);
 
   return g;
@@ -173,29 +187,28 @@ function build_gola_radni_stol(p, mats, settings) {
   const g = { materials: {} };
   const mK = mats.korpus, mF = mats.front;
 
-  // Corpus
-  addBox(g, M1, d, v - c, 0, -d, c, mK);
-  addBox(g, M1, d, v - c, s - M1, -d, c, mK);
-  addBox(g, s - 2 * M1, d, M1, M1, -d, c, mK);
-  addBox(g, s - 2 * M1, 7, M1, M1, -7, v - M1, mK);
-  addBox(g, s - 2 * M1, 7, M1, M1, -d, v - M1 - 5, mK);
-  if (settings.pozadina) addBox(g, s, HDF, v - c, 0, 0, c, mK);
-
+  // SCAD gola_radni_stol: front rail at v-60 (v-6cm)
+  buildCorpus(g, s, v, d, c, mK, settings, v - 6);
   buildShelves(g, s, v, d, c, brp, mK, settings);
 
+  // Doors — SCAD: vrata=[s/brv-3, mdf, v-c-33] (3.3cm shorter than regular)
   if (settings.front_vrata && brvr > 0) {
     const dw = s / brvr - 0.3;
     const dh = v - c - 3.3;
     for (let i = 0; i < brvr; i++) {
       addBox(g, dw, MDF, dh, 0.15 + i * (s / brvr), -d - MDF, c, mF);
     }
+    // No handles in gola
   }
+  // Cokla panel + Legs
+  addCoklaPanel(g, s, c, d, mF);
   addLegs(g, s, c, d);
   return g;
 }
 
 /**
  * fiokar — drawer unit
+ * SCAD: front rail at v-m1, drawer fronts with handles
  */
 function build_fiokar(p, mats, settings) {
   const { s, v, d, c, brf = 4, brfp = 2, brfd = 1 } = p;
@@ -203,58 +216,98 @@ function build_fiokar(p, mats, settings) {
   const mK = mats.korpus, mF = mats.front;
   const kl = 50; // drawer depth (cm)
 
-  buildCorpus(g, s, v, d, c, mK, settings);
+  // SCAD fiokar: front rail at v-m1
+  buildCorpus(g, s, v, d, c, mK, settings, v - M1);
 
   // Drawer fronts — SCAD 1:1
   if (settings.celafioka && brf > 0) {
     const pom = (v - c) / brf;
-    // SCAD regular: (v-c)/brf*2-3,  SCAD gola: (v-c)/brf*2-30
-    const fh_deep = pom * 2 - (settings.isGola ? 3.0 : 0.3);
-    // SCAD regular: (v-c)/brf-3,    SCAD gola: (v-c)/brf-18
-    const fh_shrt = pom - (settings.isGola ? 1.8 : 0.3);
+    // SCAD: celo_duboke_fioke = [s-3, mdf, (v-c)/brf*2-3]
+    const fh_deep = pom * 2 - 0.3;
+    // SCAD: celo_plitke_fioke = [s-3, mdf, (v-c)/brf-3]
+    const fh_shrt = pom - 0.3;
     const fw = s - 0.3;
 
-    // Deep drawer front (bottom)
+    // Deep drawer front (bottom) at c
     addBox(g, fw, MDF, fh_deep, 0.15, -d - MDF, c, mF);
-    
     // Handle
-    if (!settings.isGola) {
-      addCevastaRuckaHorizontala(g, s / 2, d + MDF, c + pom);
-    }
+    addCevastaRuckaHorizontala(g, s / 2, d + MDF, c + pom);
 
-    // Shallow drawer fronts (above)
+    // Shallow drawer fronts — SCAD: for(k=[2:brf-1])
     for (let k = 2; k < brf; k++) {
       addBox(g, fw, MDF, fh_shrt, 0.15, -d - MDF, c + k * pom, mF);
-      // Handle
-      if (!settings.isGola) {
-        addCevastaRuckaHorizontala(g, s / 2, d + MDF, c + pom - 5 + k * pom);
-      }
+      addCevastaRuckaHorizontala(g, s / 2, d + MDF, c + pom - 5 + k * pom);
     }
   }
 
-  // Drawer boxes (visible interior)
+  // Drawer boxes (visible interior) — SCAD deep drawer at for(i=[0])
   if (settings.fioke) {
     const pom = (v - c) / brf;
-    const dboxH = (v - c) / brf * 2 - 5.8;
-    const dboxSide = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.5 });
-
-    for (let i = 0; i <= 0; i++) {
-      // Sides
-      addBox(g, M, kl - 0.8, dboxH, M1 + 0.4, -d, c + 1.2 + i * pom, dboxSide);
-      addBox(g, M, kl - 0.8, dboxH, s - M1 - M - 0.4, -d, c + 1.2 + i * pom, dboxSide);
-    }
+    const dboxH = pom * 2 - 5.8;
+    const mstrH = dboxH - 1.2 - M1;
+    const dnoW = s - 2 * M1 - 0.8 - 2 * M;
+    const baseZ = c + 1.2;
+    addBox(g, M, kl - 0.8, dboxH, M1 + 0.4, -kl + 0.8, baseZ + M1 + 0.4, mK);
+    addBox(g, M, kl - 0.8, dboxH, s - M1 - 0.4 - M, -kl + 0.8, baseZ + M1 + 0.4, mK);
+    addBox(g, dnoW, M1, mstrH, M1 + 0.4 + M, -kl + 0.8, baseZ + M1 + 0.4 + 1.2 + M1, mK);
+    addBox(g, dnoW, M1, mstrH, M1 + 0.4 + M, -M1, baseZ + M1 + 0.4 + 1.2 + M1, mK);
+    addBox(g, dnoW, kl - 1.0, M1, M1 + 0.4 + M, -kl + 1.0, baseZ + M1 + 0.4 + 1.2, mK);
   }
 
+  // Cokla panel + Legs
+  addCoklaPanel(g, s, c, d, mF);
   addLegs(g, s, c, d);
   return g;
 }
 
 /**
  * fiokar_gola — bare drawer unit (taller variant)
+ * SCAD: front rail at v-60, drawer fronts -3cm/-1.8cm, shallow at k=[2,2.92]
  */
 function build_fiokar_gola(p, mats, settings) {
-  const q = { ...p, brf: p.brf || 4, brfp: p.brfp || 2, brfd: p.brfd || 1 };
-  return build_fiokar(q, mats, { ...settings, isGola: true }); // Extrudes correctly
+  const { s, v, d, c, brf = 4, brfp = 2, brfd = 1 } = p;
+  const g = { materials: {} };
+  const mK = mats.korpus, mF = mats.front;
+  const kl = 50;
+
+  // Corpus — front rail at v-60 (v-6cm)
+  addBox(g, M1, d, v - c, 0, -d, c, mK);
+  addBox(g, M1, d, v - c, s - M1, -d, c, mK);
+  addBox(g, s - 2 * M1, d, M1, M1, -d, c, mK);
+  addBox(g, s - 2 * M1, 7, M1, M1, -7, v - M1, mK);
+  addBox(g, s - 2 * M1, 7, M1, M1, -d, v - 6, mK);
+  if (settings.pozadina) addBox(g, s, HDF, v - c, 0, 0, c, mK);
+
+  if (settings.celafioka && brf > 0) {
+    const pom = (v - c) / brf;
+    const fh_deep = pom * 2 - 3.0;  // SCAD: (v-c)/brf*2-30
+    const fh_shrt = pom - 1.8;       // SCAD: (v-c)/brf-18
+    const fw = s - 0.3;
+
+    addBox(g, fw, MDF, fh_deep, 0.15, -d - MDF, c, mF);
+
+    // SCAD: for(k=[2, 2.92])
+    for (const k of [2, 2.92]) {
+      addBox(g, fw, MDF, fh_shrt, 0.15, -d - MDF, c + k * pom, mF);
+    }
+  }
+
+  if (settings.fioke) {
+    const pom = (v - c) / brf;
+    const dboxH = pom * 2 - 10.0;  // SCAD gola: (v-c)/brf*2-100
+    const mstrH = dboxH - 1.2 - M1;
+    const dnoW = s - 2 * M1 - 0.8 - 2 * M;
+    const baseZ = c + 1.2;
+    addBox(g, M, kl - 1.0, dboxH, M1 + 0.4, -kl + 1.0, baseZ + M1 + 0.4, mK);
+    addBox(g, M, kl - 1.0, dboxH, s - M1 - 0.4 - M, -kl + 1.0, baseZ + M1 + 0.4, mK);
+    addBox(g, dnoW, M1, mstrH, M1 + 0.4 + M, -kl + 1.0, baseZ + M1 + 0.4 + 1.2 + M1, mK);
+    addBox(g, dnoW, M1, mstrH, M1 + 0.4 + M, -M1, baseZ + M1 + 0.4 + 1.2 + M1, mK);
+    addBox(g, dnoW, kl - 1.0, M1, M1 + 0.4 + M, -kl + 1.0, baseZ + M1 + 0.4 + 1.2, mK);
+  }
+
+  addCoklaPanel(g, s, c, d, mF);
+  addLegs(g, s, c, d);
+  return g;
 }
 
 /**
@@ -277,6 +330,8 @@ function build_vrata_sudo_masine(p, mats, settings) {
     // Handle — SCAD: translate([s/2,-d-mdf,v-50]) cevasta_rucka_horizontala(186,25,8)
     addCevastaRuckaHorizontala(g, s / 2, d + MDF, v - 5);
   }
+  addCoklaPanel(g, s, c, d, mats.front);
+  addLegs(g, s, c, d);
   return g;
 }
 
@@ -295,10 +350,11 @@ function build_vrata_sudo_masine_gola(p, mats, settings) {
   // Door — SCAD: vrata_sudo_masine=[s-3,mdf,v-c-33]
   if (settings.front_vrata) {
     const dw = s - 0.3;
-    const dh = v - c - 3.3; // 3.3cm shorter
+    const dh = v - c - 3.3;
     addBox(g, dw, MDF, dh, 0.15, -d - MDF, c, mats.front);
-    // No handle in gola
   }
+  addCoklaPanel(g, s, c, d, mats.front);
+  addLegs(g, s, c, d);
   return g;
 }
 
@@ -335,6 +391,7 @@ function build_radni_stol_rerne(p, mats, settings) {
       addCevastaRuckaHorizontala(g, s / 2, d + MDF, c + (v - c - M1 - rerna - 5));
     }
   }
+  addCoklaPanel(g, s, c, d, mF);
   addLegs(g, s, c, d);
   return g;
 }
@@ -352,25 +409,24 @@ function build_radni_stol_rerne_gola(p, mats, settings) {
   addBox(g, M1, d, v - c, s - M1, -d, c, mK);
   // Bottom shelf
   addBox(g, s - 2 * M1, d, M1, M1, -d, c, mK);
-  
-  // Shelf above oven — SCAD: translate([m1,-d,v-2*m1-rerna-40]) cube(dno);
-  // 40 is 4cm drop
-  const shelfY = v - 2 * M1 - rerna - 4;
+
+  // Shelf above oven — SCAD: translate([m1, 0, v-60-rerna-m1])
+  const shelfY = v - 6 - rerna - M1;
   addBox(g, s - 2 * M1, d, M1, M1, -d, shelfY, mK);
-  
+
   // Top rails
-  // SCAD back: translate([m1,-70,v-m1]) cube(traverzne);
+  // SCAD back: translate([m1, d-70, v-m1])
   addBox(g, s - 2 * M1, 7, M1, M1, -7, v - M1, mK);
-  // SCAD front: translate([m1,-d,v-m1-40]) cube(traverzne); (dropped 4cm)
-  addBox(g, s - 2 * M1, 7, M1, M1, -d, v - M1 - 4, mK);
-  
+  // SCAD front: translate([m1, 0, v-60])
+  addBox(g, s - 2 * M1, 7, M1, M1, -d, v - 6, mK);
+
   if (settings.pozadina) addBox(g, s, HDF, v - c, 0, 0, c, mK);
 
   // Oven cutout visual
   const mOven = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.8 });
-  addBox(g, s - 2 * M1, d - 2, rerna - M1 + 4, M1, -d + 1, shelfY + M1, mOven);
+  addBox(g, s - 2 * M1, d - 2, rerna, M1, -d + 1, shelfY + M1, mOven);
 
-  // Drawer front — SCAD: celo_fioke= [s-3,mdf,v-c-60-rerna-3] -> v - c - 6.3 - rerna
+  // Drawer front — SCAD: celo_fioke= [s-3,mdf,v-c-60-rerna-3]
   if (settings.celafioka) {
     const fh = v - c - rerna - 6.3;
     if (fh > 0) {
@@ -378,6 +434,7 @@ function build_radni_stol_rerne_gola(p, mats, settings) {
       // No handle in gola
     }
   }
+  addCoklaPanel(g, s, c, d, mF);
   addLegs(g, s, c, d);
   return g;
 }
@@ -412,6 +469,7 @@ function build_radni_stol_rerne_gola_bez_fioke(p, mats, settings) {
       addBox(g, s - 0.3, MDF, frontH, 0.15, -d - MDF, v - 3 - frontH, mF);
     }
   }
+  addCoklaPanel(g, s, c, d, mF);
   addLegs(g, s, c, d);
   return g;
 }
@@ -460,8 +518,8 @@ function build_dug_element_90(p, mats, settings) {
   // Top rails
   // Long side back
   addBox(g, dss - 2 * M1, 7, M1, M1, -7, v - M1, mK);
-  // Long side front (dropped by 5cm for gola)
-  addBox(g, dss - 2 * M1, 7, M1, M1, -d, settings.isGola ? v - 5 : v - M1, mK);
+  // Long side front (dropped to v-6 for gola)
+  addBox(g, dss - 2 * M1, 7, M1, M1, -d, settings.isGola ? v - 6 : v - M1, mK);
 
   // Short side corpus (perpendicular)
   addBox(g, d, M1, v - c, 0, -lss, c, mK);         // back of short side
@@ -469,7 +527,7 @@ function build_dug_element_90(p, mats, settings) {
   // Short side back
   addBox(g, 7, lss - d - M1, M1, 0, -lss + M1, v - M1, mK); // top left short
   // Short side front (dropped by 5cm for gola)
-  addBox(g, 7, lss - d - M1, M1, d - 7, -lss + M1, settings.isGola ? v - 5 : v - M1, mK); // top right short
+  addBox(g, 7, lss - d - M1, M1, d - 7, -lss + M1, settings.isGola ? v - 6 : v - M1, mK); // top right short
 
   // Shelves in long side
   if (settings.polica && brp > 0) {
@@ -494,9 +552,11 @@ function build_dug_element_90(p, mats, settings) {
     // Short side door (rotated 90°)
     const sdw = lss - d - MDF - 0.3;
     addBox(g, MDF, sdw, dh, -MDF, -lss + 0.15, c, mF);
-    // Handle — SCAD: translate([dss-50,-d-mdf,v-186/2-50]) cevasta_rucka(186,25,8)
     addCevastaRucka(g, dss - 5, d + MDF, v - 18.6 / 2 - 5);
   }
+
+  // Cokla panel
+  addCoklaPanel(g, dss, c, d, mF);
 
   // Corner cabinet has 8 legs in SCAD
   const legs = [
@@ -516,13 +576,13 @@ function build_dug_element_90_gola(p, mats, settings) {
   const g = build_dug_element_90(p, mats, { ...settings, front_vrata: false, isGola: true }); // Build without default doors
   const { v, d, c, dss = 90, lss = 90 } = p;
   const mF = mats.front;
-  
+
   // Doors — SCAD for gola: vrata=[..., v-c-33]
   if (settings.front_vrata) {
     const ldw = dss - d - MDF - 0.3;
     const dh = v - c - 3.3; // 3.3cm shorter
     addBox(g, ldw, MDF, dh, 0.15 + d + MDF, -d - MDF, c, mF);
-    
+
     const sdw = lss - d - MDF - 0.3;
     addBox(g, MDF, sdw, dh, -MDF, -lss + 0.15, c, mF);
     // No handle added
@@ -562,7 +622,7 @@ function build_donji_ugaoni_element_45(p, mats, settings) {
   // traverzna kraca
   addBox(g, 7, lss - M1, M1, 7, -lss + M1, v - M1, mK);
   // traverzna
-  addBox(g, dss - 7 - M1, 7, M1, 7, -7, v - M1, mK);
+  addBox(g, dss - 7 - M1, 7, M1, M1, -7, v - M1, mK);
 
   if (settings.pozadina) {
     addBox(g, HDF, lss, v - c, -HDF, -lss, c, mK);
@@ -588,6 +648,8 @@ function build_donji_ugaoni_element_45(p, mats, settings) {
     // Handle — SCAD: translate([dss-50,-d-50,v-186/2-50]) rotate([0,0,polozaj_vrati]) cevasta_rucka
     addCevastaRucka(g, dss - 5, d + 5, v - 18.6 / 2 - 5);
   }
+
+  addCoklaPanel(g, dss, c, d, mF);
 
   // 5 legs for 45 corner
   const legs = [
@@ -692,6 +754,42 @@ function build_klasicna_viseca_gola(p, mats, settings) {
 }
 
 /**
+ * klasicna_viseca_gola_ispod_grede — variant with beam cutout
+ * SCAD: sirina_grede=300; visina_grede=210;
+ */
+function build_klasicna_viseca_gola_ispod_grede(p, mats, settings) {
+  const { s, v, d, brp = 2, brvr = 1 } = p;
+  const sg = 30, vg = 21; // Beam width and height in cm
+  const g = { materials: {} };
+  const mK = mats.korpus, mF = mats.front;
+
+  // Stranice
+  addBox(g, M1, d, v - vg, 0, -d, 0, mK);
+  addBox(g, M1, d, v - vg, s - M1, -d, 0, mK);
+  // Dno i Plafon
+  addBox(g, s - 2 * M1, d - 2.2, M1, M1, -d + 2.2, 0, mK); // bottom
+  addBox(g, s - 2 * M1, d, M1, M1, -d, v - vg - M1, mK); // top (dropped for beam)
+
+  if (settings.pozadina) addBox(g, s, HDF, v - vg, 0, 0, 0, mK);
+
+  if (settings.polica && brp > 0) {
+    const sp = (v - vg - M1) / (brp + 1);
+    for (let i = 1; i <= brp; i++) {
+      addBox(g, s - 2 * M1, d - 3, M1, M1, -d + 3, i * sp, mK);
+    }
+  }
+  if (settings.front_vrata && brvr > 0) {
+    const dw = s / brvr - 0.3;
+    const dh = v - vg - 0.3;
+    for (let i = 0; i < brvr; i++) {
+      const dx = 0.15 + i * (s / brvr);
+      addBox(g, dw, MDF, dh, dx, -d - MDF, 0, mF);
+    }
+  }
+  return g;
+}
+
+/**
  * viseca_na_kipu — flip-up door wall cabinet
  */
 function build_viseca_na_kipu(p, mats, settings) {
@@ -728,10 +826,27 @@ function build_viseca_na_kipu(p, mats, settings) {
  * viseca_na_kipu_gola — flip-up door wall cabinet (GOLA variant)
  */
 function build_viseca_na_kipu_gola(p, mats, settings) {
-  const g = build_viseca_na_kipu(p, mats, { ...settings, front_vrata: false }); 
-  const { s, v, d, brvr = 2 } = p;
-  const mF = mats.front;
-  
+  const { s, v, d, brp = 2, brvr = 2 } = p;
+  const g = { materials: {} };
+  const mK = mats.korpus, mF = mats.front;
+
+  // Custom corpus for GOLA variant: bottom is shallower (d-2.2)
+  addBox(g, M1, d, v, 0, -d, 0, mK);
+  addBox(g, M1, d, v, s - M1, -d, 0, mK);
+  addBox(g, s - 2 * M1, d - 2.2, M1, M1, -d + 2.2, 0, mK); // bottom
+  addBox(g, s - 2 * M1, d, M1, M1, -d, v - M1, mK);          // top
+  if (settings.pozadina) addBox(g, s, HDF, v, 0, 0, 0, mK);
+
+  // Middle horizontal divider
+  addBox(g, s - 2 * M1, d, M1, M1, -d, (v - M1) / 2, mK);
+
+  if (settings.polica && brp > 0) {
+    const sp = ((v - M1) / 2) / 2;
+    for (const i of [1, 3]) {
+      addBox(g, s - 2 * M1, d - 3, M1, M1, -d + 3, i * sp, mK);
+    }
+  }
+
   if (settings.front_vrata) {
     const dh = v / 2 - 0.3;
     const dw = s - 0.3;
@@ -753,8 +868,8 @@ function build_gue90(p, mats, settings) {
   const mK = mats.korpus, mF = mats.front;
 
   // Long side
-  addBox(g, M1, d, v, sl - M1, -d, 0, mK);
   addBox(g, M1, d, v, 0, -d, 0, mK);
+  addBox(g, M1, d, v, sl - M1, -d, 0, mK);
   addBox(g, sl - 2 * M1, d, M1, M1, -d, 0, mK);
   addBox(g, sl - 2 * M1, d, M1, M1, -d, v - M1, mK);
 
@@ -842,6 +957,7 @@ function build_ormar_visoki(p, mats, settings) {
       addCevastaRucka(g, s / brvr - 5 + j * postavi_rucke, d + MDF, v - 18.6 / 2 - 5);
     }
   }
+  addCoklaPanel(g, s, c, d, mF);
   addLegs(g, s, c, d);
   return g;
 }
@@ -854,7 +970,7 @@ function build_radni_stol_pored_stuba(p, mats, settings) {
   // Stranice
   addBox(g, M1, d, v - c, 0, -d, c, mK); // left
   addBox(g, M1, d - ds, v - c, s - M1, -d, c, mK); // right
-  
+
   // Stranice do stuba (bocna and prednja)
   addBox(g, M1, ds, v - c - 2 * M1, s - M1 - ss, -ds, c + M1, mK);
   addBox(g, ss, M1, v - c - 2 * M1, s - M1 - ss, -ds - M1, c + M1, mK);
@@ -898,6 +1014,7 @@ function build_radni_stol_pored_stuba(p, mats, settings) {
     }
   }
 
+  addCoklaPanel(g, s, c, d, mF);
   addLegs(g, s, c, d);
   return g;
 }
@@ -911,7 +1028,7 @@ function build_radni_stol_pored_stuba_gola(p, mats, settings) {
   // Stranice — identical to regular
   addBox(g, M1, d, v - c, 0, -d, c, mK); // left
   addBox(g, M1, d - ds, v - c, s - M1, -d, c, mK); // right (shorter for pillar)
-  
+
   // Stranice do stuba (bocna and prednja)
   addBox(g, M1, ds, v - c - 2 * M1, s - M1 - ss, -ds, c + M1, mK);
   addBox(g, ss, M1, v - c - 2 * M1, s - M1 - ss, -ds - M1, c + M1, mK);
@@ -951,6 +1068,7 @@ function build_radni_stol_pored_stuba_gola(p, mats, settings) {
     }
   }
 
+  addCoklaPanel(g, s, c, d, mF);
   addLegs(g, s, c, d);
   return g;
 }
@@ -1014,6 +1132,7 @@ function build_visoki_element_za_kombinovani_frizider(p, mats, settings) {
   addBox(g, s, 7, M1, 0, -d - M1, v - 2 * M1, mG);
   addBox(g, s, 3, M1, 0, -d - M1, v - M1, mG);
 
+  addCoklaPanel(g, s, c, d, mF);
   addLegs(g, s, c, d);
   return g;
 }
@@ -1067,6 +1186,7 @@ function build_visoki_element_za_kombinovani_frizider_gola(p, mats, settings) {
   addBox(g, s, 7, M1, 0, -d - M1, v - 2 * M1, mG);
   addBox(g, s, 3, M1, 0, -d - M1, v - M1, mG);
 
+  addCoklaPanel(g, s, c, d, mF);
   addLegs(g, s, c, d);
   return g;
 }
@@ -1114,6 +1234,7 @@ function build_visoki_element_za_frizider(p, mats, settings) {
   addBox(g, s, 7, M1, 0, -d - M1, v - 2 * M1, mG);
   addBox(g, s, 3, M1, 0, -d - M1, v - M1, mG);
 
+  addCoklaPanel(g, s, c, d, mF);
   addLegs(g, s, c, d);
   return g;
 }
@@ -1160,6 +1281,7 @@ function build_visoki_element_za_frizider_gola(p, mats, settings) {
   addBox(g, s, 7, M1, 0, -d - M1, v - 2 * M1, mG);
   addBox(g, s, 3, M1, 0, -d - M1, v - M1, mG);
 
+  addCoklaPanel(g, s, c, d, mF);
   addLegs(g, s, c, d);
   return g;
 }
@@ -1216,6 +1338,7 @@ function build_visoki_element_za_rernu(p, mats, settings) {
   addBox(g, s, 7, M1, 0, -d - M1, v - 2 * M1, mG);
   addBox(g, s, 3, M1, 0, -d - M1, v - M1, mG);
 
+  addCoklaPanel(g, s, c, d, mF);
   addLegs(g, s, c, d);
   return g;
 }
@@ -1280,6 +1403,7 @@ function build_visoki_element_za_rernu_sa_fiokama(p, mats, settings) {
   addBox(g, s, 7, M1, 0, -d - M1, v - 2 * M1, mG);
   addBox(g, s, 3, M1, 0, -d - M1, v - M1, mG);
 
+  addCoklaPanel(g, s, c, d, mF);
   addLegs(g, s, c, d);
   return g;
 }
@@ -1344,6 +1468,7 @@ function build_visoki_element_za_rernu_i_mikrotalasnu_pec_sa_fiokama(p, mats, se
   addBox(g, s, 7, M1, 0, -d - M1, v - 2 * M1, mG);
   addBox(g, s, 3, M1, 0, -d - M1, v - M1, mG);
 
+  addCoklaPanel(g, s, c, d, mF);
   addLegs(g, s, c, d);
   return g;
 }
@@ -1379,11 +1504,18 @@ function build_sudopera(p, mats, settings) {
 
 /**
  * gue90rotiran — rotated upper corner 90° cabinet
- * Same geometry as gue90 but rotated 90° and translated
  */
 function build_gue90rotiran(p, mats, settings) {
-  // Reuse gue90 with swapped orientation
-  return build_gue90(p, mats, settings);
+  const g = build_gue90(p, mats, settings);
+  // SCAD: rotate([0,0,90]) translate([0,-sl,0])
+  // Three.js equivalent: rotateY(PI/2) then translate(sl, 0, 0)
+  for (const matKey in g.materials) {
+    g.materials[matKey] = g.materials[matKey].map(geom => {
+      let r = rotateY(Math.PI / 2, geom);
+      return translate([p.sl, 0, 0], r);
+    });
+  }
+  return g;
 }
 
 /**
@@ -1453,7 +1585,7 @@ const BUILDERS = {
   donji_ugaoni_element_45_sa_plocom_gola: build_donji_ugaoni_element_45_gola,
   klasicna_viseca: build_klasicna_viseca,
   klasicna_viseca_gola: build_klasicna_viseca_gola,
-  klasicna_viseca_gola_ispod_grede: build_klasicna_viseca_gola,
+  klasicna_viseca_gola_ispod_grede: build_klasicna_viseca_gola_ispod_grede,
   viseca_na_kipu: build_viseca_na_kipu,
   viseca_na_kipu_gola: build_viseca_na_kipu_gola,
   gue90: build_gue90,

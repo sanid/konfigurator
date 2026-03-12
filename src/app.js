@@ -432,6 +432,22 @@ const MODULE_ICONS = {
     <circle cx="18" cy="4"  r=".8" fill="currentColor" stroke="none"/>
     <circle cx="18" cy="15" r=".8" fill="currentColor" stroke="none"/>`,
 
+  // Tall cabinet next to pillar: box + pillar notch top-right
+  'radni_stol_pored_stuba': `
+    <rect x="2" y="2" width="17" height="20" rx="1"/>
+    <rect x="17" y="2" width="5" height="12" rx=".5" opacity=".3"/>
+    <line x1="2"  y1="8"  x2="19" y2="8"/>
+    <line x1="2"  y1="14" x2="19" y2="14"/>
+    <circle cx="10.5" cy="11" r="1"/>
+    <circle cx="10.5" cy="17" r="1"/>`,
+
+  'radni_stol_pored_stuba_gola': `
+    <rect x="2" y="2" width="17" height="20" rx="1"/>
+    <rect x="17" y="2" width="5" height="12" rx=".5" opacity=".3"/>
+    <line x1="2"  y1="8"  x2="19" y2="8"/>
+    <line x1="2"  y1="14" x2="19" y2="14"/>
+    <line x1="2"  y1="20" x2="19" y2="20" opacity=".4"/>`,
+
   // ── Ugaoni (corner cabinets) ──────────────────────────────────────────────
 
   // L-shaped 90° corner: two legs visible as an L
@@ -512,14 +528,6 @@ const MODULE_ICONS = {
 
   // ── Visoki (tall full-height cabinets) ───────────────────────────────────
 
-  // Tall cabinet next to pillar: box + pillar notch top-right
-  'radni_stol_pored_stuba': `
-    <rect x="2" y="2" width="17" height="20" rx="1"/>
-    <rect x="17" y="2" width="5" height="12" rx=".5" opacity=".3"/>
-    <line x1="2"  y1="8"  x2="19" y2="8"/>
-    <line x1="2"  y1="14" x2="19" y2="14"/>
-    <circle cx="10.5" cy="11" r="1"/>
-    <circle cx="10.5" cy="17" r="1"/>`,
 
   // Full-height wardrobe/pantry: tall box, 2 doors, handles
   'ormar_visoki': `
@@ -1099,10 +1107,18 @@ function getPos() {
 // ─── Plan Actions ─────────────────────────────────────────────────────────────
 function initPlanActions() {
   document.getElementById('btn-add').addEventListener('click', addToPlan);
-  document.getElementById('btn-delete').addEventListener('click', deleteSelected);
   document.getElementById('btn-krojna').addEventListener('click', showKrojnaLista);
   document.getElementById('btn-optimik').addEventListener('click', exportOptimik);
   document.getElementById('btn-pdf').addEventListener('click', exportPdf);
+
+  // Toggle Materials Panel
+  const btnToggleMat = document.getElementById('btn-toggle-materials');
+  const matPanel = document.getElementById('materials-panel');
+  if (btnToggleMat && matPanel) {
+    btnToggleMat.addEventListener('click', () => {
+      matPanel.classList.toggle('hidden');
+    });
+  }
 
   // Wall grid special buttons
   const btnRadna = document.getElementById('btn-radna');
@@ -1175,7 +1191,9 @@ function initPlanActions() {
 
   document.addEventListener('keydown', e => {
     if (e.key === 'Delete' || e.key === 'Backspace') {
-      if (document.activeElement.tagName !== 'INPUT') deleteSelected();
+      if (document.activeElement.tagName !== 'INPUT' && state.selectedPlanIdx >= 0) {
+        deleteModule(state.selectedPlanIdx);
+      }
     }
   });
 
@@ -1592,9 +1610,8 @@ function createSpanningCokla(idxA, idxB) {
   showNotification(`Cokla dodana (L=${Math.round(finalL)}cm)!`, 'success');
 }
 
-function deleteSelected() {
-  if (state.selectedPlanIdx < 0) return;
-  const idx = state.selectedPlanIdx;
+function deleteModule(idx) {
+  if (idx < 0 || idx >= state.plan.length) return;
   const item = state.plan[idx];
 
   // Free grid cell
@@ -1606,15 +1623,14 @@ function deleteSelected() {
   state.plan.splice(idx, 1);
   removeModuleGroup(idx);
 
-  // Remap remaining group indices (shift down by 1 for all > idx)
-  // Simple approach: rebuild all remaining groups from scratch
+  // Remap remaining group indices
   rebuildAllModules();
 
   state.selectedPlanIdx = -1;
   editingPlanIdx = -1;
-  refreshParams(); // restore normal params panel
+  refreshParams();
 
-  // If plan is now empty, reset everything to initial state
+  // If plan is now empty, reset
   if (state.plan.length === 0) {
     state.occupiedCells = {};
     setPos('x', 0);
@@ -1710,6 +1726,16 @@ function renderPlanList() {
     info.appendChild(meta);
     el.appendChild(icon);
     el.appendChild(info);
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'plan-item-delete';
+    deleteBtn.innerHTML = '🗑';
+    deleteBtn.title = 'Obriši';
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteModule(idx);
+    });
+    el.appendChild(deleteBtn);
 
     el.addEventListener('click', () => {
       selectModuleByIndex(idx);
