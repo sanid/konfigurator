@@ -439,36 +439,61 @@ function disposeGroup(group) {
 }
 
 /**
+ * getModuleGroup — retrieve the THREE.Group for a module index.
+ */
+export function getModuleGroup(idx) {
+  return moduleGroups.get(idx);
+}
+
+/**
+ * getModuleSnapInfoAt — find module intersection details.
+ * @returns { {index:number, normal:THREE.Vector3, point:THREE.Vector3} | null }
+ */
+export function getModuleSnapInfoAt(x, y) {
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2(x, y);
+  raycaster.setFromCamera(mouse, camera);
+
+  const targets = Array.from(moduleGroups.values());
+  const intersects = raycaster.intersectObjects(targets, true);
+
+  if (intersects.length > 0) {
+    const inter = intersects[0];
+    let obj = inter.object;
+    let foundIdx = -1;
+
+    // Traverse up to find the group with planIndex or match in moduleGroups
+    for (const [idx, group] of moduleGroups.entries()) {
+      let isAncestor = false;
+      group.traverse(child => { if (child === inter.object) isAncestor = true; });
+      if (isAncestor) {
+        foundIdx = idx;
+        break;
+      }
+    }
+
+    if (foundIdx === -1) return null;
+
+    // Convert local normal to world normal
+    const worldNormal = inter.face.normal.clone();
+    worldNormal.transformDirection(inter.object.matrixWorld);
+
+    return { 
+      index: foundIdx, 
+      normal: worldNormal, 
+      point: inter.point 
+    };
+  }
+  return null;
+}
+
+/**
  * getModuleIndexAt — find which module is at the given normalized mouse coordinates.
  * @param {number} x - Normalized x (-1 to 1)
  * @param {number} y - Normalized y (-1 to 1)
  * @returns {number|null} index of the module in moduleGroups, or null
  */
 export function getModuleIndexAt(x, y) {
-  const raycaster = new THREE.Raycaster();
-  const mouse = new THREE.Vector2(x, y);
-  raycaster.setFromCamera(mouse, camera);
-
-  // We want to check all groups in moduleGroups
-  const targets = Array.from(moduleGroups.values());
-  const intersects = raycaster.intersectObjects(targets, true);
-
-  if (intersects.length > 0) {
-    // Find which group the intersected object belongs to
-    let obj = intersects[0].object;
-    while (obj && !obj.userData?.planIndex && obj.parent) {
-      if (obj.userData?.planIndex !== undefined) break; // found it
-      obj = obj.parent;
-    }
-
-    // Search for the index in moduleGroups by checking the object
-    for (const [idx, group] of moduleGroups.entries()) {
-      if (group === obj || group.children.includes(obj)) return idx;
-      // Deep check
-      let found = false;
-      group.traverse(child => { if (child === intersects[0].object) found = true; });
-      if (found) return idx;
-    }
-  }
-  return null;
+  const info = getModuleSnapInfoAt(x, y);
+  return info ? info.index : null;
 }

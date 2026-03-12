@@ -155,13 +155,13 @@
                                  <label class="field-label"
                                     style="height: 24px; display: flex; align-items: flex-end;">X &mdash; od lijevog
                                     ruba (cm)</label>
-                                 <input type="number" id="fixture-x-input" class="num-input" value="0" step="1" min="0">
+                                 <input type="number" id="fixture-x-input" class="num-input" value="0" step="0.1" min="0">
                               </div>
                               <div class="field-group">
                                  <label class="field-label"
                                     style="height: 24px; display: flex; align-items: flex-end;">Y &mdash; od poda
                                     (cm)</label>
-                                 <input type="number" id="fixture-y-input" class="num-input" value="90" step="1"
+                                 <input type="number" id="fixture-y-input" class="num-input" value="90" step="0.1"
                                     min="0">
                               </div>
                            </div>
@@ -294,10 +294,10 @@
          <!-- Position -->
          <div class="section-header">POZICIJA (cm)</div>
          <div class="position-grid">
-            <label>X <input type="number" id="pos-x" class="num-input" value="0" step="1"></label>
-            <label>Y <input type="number" id="pos-y" class="num-input" value="0" step="1"></label>
-            <label>Z <input type="number" id="pos-z" class="num-input" value="0" step="1"></label>
-            <label>R° <input type="number" id="pos-r" class="num-input rot-input" value="0" step="90"></label>
+            <label>X <input type="number" id="pos-x" class="num-input" value="0" step="0.1"></label>
+            <label>Y <input type="number" id="pos-y" class="num-input" value="0" step="0.1"></label>
+            <label>Z <input type="number" id="pos-z" class="num-input" value="0" step="0.1"></label>
+            <label>R° <input type="number" id="pos-r" class="num-input rot-input" value="0" step="1"></label>
          </div>
          <!-- Plan List -->
          <div class="section-header" style="display:flex;align-items:center;justify-content:space-between;">
@@ -331,11 +331,18 @@
             <div id="krojna-table-wrap"></div>
          </div>
          <div class="modal-footer" style="justify-content:space-between;">
-            <label
-               style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:11px; color:var(--text-secondary); user-select:none;">
-               <input type="checkbox" id="krojna-simplified-toggle" style="width:14px; height:14px; cursor:pointer;">
-               Pojednostavljeni prikaz (cm)
-            </label>
+            <div style="display:flex; flex-direction:column; gap:4px;">
+               <label
+                  style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:11px; color:var(--text-secondary); user-select:none;">
+                  <input type="checkbox" id="krojna-simplified-toggle" style="width:14px; height:14px; cursor:pointer;">
+                  Pojednostavljeni prikaz (cm)
+               </label>
+               <label
+                  style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:11px; color:var(--text-secondary); user-select:none;">
+                  <input type="checkbox" id="krojna-per-module-toggle" style="width:14px; height:14px; cursor:pointer;">
+                  Prikaz po modulu
+               </label>
+            </div>
             <div style="display:flex; gap:8px;">
                <button class="btn btn-info" id="btn-export-krojna-csv">📊 Eksport CSV</button>
                <button class="btn" id="btn-modal-close">Zatvori</button>

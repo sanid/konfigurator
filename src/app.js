@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 /**
  * app.js — Main renderer process logic
  * Meco Konfigurator 2026 — Electron/JSCAD Edition
@@ -8,8 +9,8 @@ import {
   COLOR_PRESETS, TEXTURE_PRESETS
 } from './modules-config.js';
 import { buildKitchenModule } from './kitchen-builder.js';
-import { initViewer, addModuleGroup, removeModuleGroup, clearAllGroups, setCameraView, resetCamera, highlightModule, resizeViewer, setViewerTheme, addFixtureMarker, removeFixtureMarker, clearFixtureMarkers, setLightingMode, getModuleIndexAt } from './viewer.js';
-import { computeCuttingList, toCsvString } from './cutting-list.js';
+import { initViewer, addModuleGroup, removeModuleGroup, clearAllGroups, setCameraView, resetCamera, highlightModule, resizeViewer, setViewerTheme, addFixtureMarker, removeFixtureMarker, clearFixtureMarkers, setLightingMode, getModuleIndexAt, getModuleSnapInfoAt, getModuleGroup } from './viewer.js';
+import { computeCuttingList, computeCuttingListByModule, toCsvString } from './cutting-list.js';
 
 // ─── Wall Fixture Types ───────────────────────────────────────────────────────
 const FIXTURE_TYPES = [
@@ -80,6 +81,7 @@ let state = {
     kant_K: 3.5
   },
   simplifiedKrojna: false,
+  perModuleKrojna: false,
   wallFixtures: [],   // Array of { type, x, y, label }  — x/y in cm from origin
   addingRadnaPloca: false,
   addingCokla: false,
@@ -119,22 +121,85 @@ document.addEventListener('DOMContentLoaded', () => {
   selectCell(2, 1);
   window.addEventListener('resize', resizeViewer);
 
-  // Double click to select module in viewer
+  // Double click logic (Selection / Snapping / Special items)
+  let snapAnchor = null;
+
   const canvas = document.getElementById('three-canvas');
   if (canvas) {
     canvas.addEventListener('dblclick', (e) => {
       const rect = canvas.getBoundingClientRect();
       const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-      const idx = getModuleIndexAt(x, y);
-      if (idx !== null) {
+      
+      const snapInfo = getModuleSnapInfoAt(x, y);
+      if (snapInfo) {
         if (state.addingRadnaPloca) {
-          addRadnaPlocaToModule(idx);
+          addRadnaPlocaToModule(snapInfo.index);
         } else if (state.addingCokla) {
-          addCoklaToModule(idx);
+          addCoklaToModule(snapInfo.index);
         } else {
-          selectModuleByIndex(idx);
+          if (!snapAnchor) {
+            // First click: Set anchor
+            snapAnchor = snapInfo;
+            selectModuleByIndex(snapInfo.index);
+            showNotification("Sidro postavljeno. Klikni na element koji želiš spojiti.", "info");
+          } else {
+            // Second click: Snap this module using both points
+            const sourceIdx = snapInfo.index;
+            if (sourceIdx !== snapAnchor.index) {
+              snapModuleToSide(sourceIdx, snapAnchor.index, snapAnchor, snapInfo);
+            } else {
+              // Double click same module twice -> just select it
+              selectModuleByIndex(sourceIdx);
+            }
+            snapAnchor = null;
+          }
         }
+      } else {
+        snapAnchor = null;
+      }
+    });
+
+    // Single click to select or deselect
+    canvas.addEventListener('click', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const idx = getModuleIndexAt(x, y);
+      
+      if (idx === null) {
+        // Clicked outside: Deselect
+        if (state.selectedPlanIdx !== -1) {
+          const item = state.plan[state.selectedPlanIdx];
+          const group = getModuleGroup(state.selectedPlanIdx);
+          if (group && item) {
+            group.updateWorldMatrix(true, true);
+            const box = new THREE.Box3().setFromObject(group);
+            
+            // "Right" side based on module rotation
+            if (item.r === 0 || item.r === 180 || item.r === 360) {
+              setPos('x', box.max.x); // Continue to the right
+              setPos('z', item.pos[2]); // Match height
+            } else if (item.r === 90 || item.r === 270) {
+              // Rotation 90 means it's along the Y wall-depth axis
+              // Three Z maps inversely to UI Y, so 'max Y' in UI is actually min Z in Three
+              // wait, Three Z is -UI Y. So UI Y = -Three Z.
+              // So max UI Y = - box.min.z
+              setPos('y', -box.min.z);
+              setPos('z', item.pos[2]);
+            }
+          }
+        }
+
+        state.selectedPlanIdx = -1;
+        editingPlanIdx = -1;
+        snapAnchor = null; // Clear snapping state
+        highlightModule(-1);
+        refreshParams();
+        renderPlanList();
+      } else {
+        // Clicked a module: Select it
+        selectModuleByIndex(idx);
       }
     });
   }
@@ -1048,8 +1113,7 @@ function initPositionInputs() {
                 console.error('3D shift rebuild failed for', rightItem.ime, e);
               }
             }
-            // If the wall-grid selected cell is in the same row and to the right,
-            // update the position input for the next placement
+
             const [selRow, selCol] = state.selectedCell;
             if (selRow === itemRow && selCol > itemCol) {
               let calcX = 0;
@@ -1057,10 +1121,8 @@ function initPositionInputs() {
                 const k = `${selRow},${c}`;
                 if (state.occupiedCells[k]) calcX += state.occupiedCells[k].sirina;
               }
-              // Offset by delta since X origin of the row moved
-              setPos('x', calcX + delta);
+              state.position['x'] = calcX + delta;
             }
-            // Sync countertops in this row
             rebuildCountertopsForRow(itemRow);
           }
         } else if (axis === 'y') {
@@ -1661,6 +1723,128 @@ function rebuildAllModules() {
 }
 
 // ─── Plan List Render ─────────────────────────────────────────────────────────
+function updateModule3D(idx) {
+  const item = state.plan[idx];
+  const group = buildKitchenModule(
+    item.ime, item.p, state.materials, state.settings,
+    item.pos[0], item.pos[1], item.pos[2], item.r
+  );
+  removeModuleGroup(idx);
+  addModuleGroup(idx, group);
+}
+
+function getModuleSize(item) {
+  const p = item.p;
+  let s = parseFloat(p.s || p.dss || p.sl || p.l || 60);
+  let d = parseFloat(p.d || p.sd || 55);
+  let v = parseFloat(p.v || 82);
+  
+  // Custom logic for corner L
+  if (item.ime.includes('dug_element_90')) {
+    s = parseFloat(p.dss);
+    d = parseFloat(p.lss);
+  }
+  return { s, v, d };
+}
+
+function snapModuleToSide(srcIdx, anchorIdx, anchorInfo, sourceInfo) {
+  try {
+    const anchor = state.plan[anchorIdx];
+    const source = state.plan[srcIdx];
+    const groupA = getModuleGroup(anchorIdx);
+    const groupS = getModuleGroup(srcIdx);
+    if (!anchor || !source || !groupA || !groupS) return;
+
+    // Ensure matrices are up to date
+    groupA.updateWorldMatrix(true, true);
+    groupS.updateWorldMatrix(true, true);
+
+    const nA = anchorInfo.normal.clone();
+    const nS = sourceInfo.normal.clone();
+
+    // 1. Auto-Rotate Source Module if both clicked faces are vertical (sides, front, back)
+    if (Math.abs(nA.y) < 0.5 && Math.abs(nS.y) < 0.5) {
+      // Find angle of normals in XZ plane (Math.atan2(x, z))
+      // We want nS to map exactly to -nA
+      let angleTarget = Math.atan2(-nA.x, -nA.z);
+      let angleSource = Math.atan2(nS.x, nS.z);
+      let deltaRad = angleTarget - angleSource;
+      
+      // Calculate rotation offset in degrees and snap to nearest 90
+      let deltaDeg = Math.round((-deltaRad * 180 / Math.PI) / 90) * 90;
+      
+      source.r = (source.r + deltaDeg) % 360;
+      if (source.r < 0) source.r += 360;
+      
+      // Force update the 3D object's rotation matrix manually to ensure Box3 reads the new rotation
+      groupS.rotation.set(0, -source.r * (Math.PI / 180), 0);
+      groupS.updateMatrixWorld(true);
+    }
+
+    // 2. Exact Bounding Box Face Translation
+    const boxA = new THREE.Box3().setFromObject(groupA);
+    const boxS = new THREE.Box3().setFromObject(groupS);
+    
+    // Identify the shift needed to align the appropriate edges
+    let shiftX = 0, shiftY = 0, shiftZ = 0;
+    
+    if (nA.x > 0.5) shiftX = boxA.max.x - boxS.min.x;       // Anchor Right
+    else if (nA.x < -0.5) shiftX = boxA.min.x - boxS.max.x; // Anchor Left
+    else if (nA.y > 0.5) shiftY = boxA.max.y - boxS.min.y;  // Anchor Top
+    else if (nA.y < -0.5) shiftY = boxA.min.y - boxS.max.y; // Anchor Bottom
+    else if (nA.z > 0.5) shiftZ = boxA.max.z - boxS.min.z;  // Anchor Back
+    else if (nA.z < -0.5) shiftZ = boxA.min.z - boxS.max.z; // Anchor Front
+
+    // Translate UI coordinates directly
+    let nx = source.pos[0] + shiftX;
+    let ny = source.pos[1] - shiftZ; // Three Z maps inversely to UI Y
+    let nz = source.pos[2] + shiftY; // Three Y maps directly to UI Z
+
+    // 3. Smart Flush: Perfectly align the perpendicular axes to the anchor module origins
+    if (Math.abs(nA.x) > 0.5) {
+      // Snapped left/right: Flush BACK (wall) and BOTTOM (floor)
+      let flush_shiftZ = boxA.max.z - boxS.max.z; 
+      ny = source.pos[1] - flush_shiftZ; 
+      let flush_shiftY = boxA.min.y - boxS.min.y;
+      nz = source.pos[2] + flush_shiftY;
+    } else if (Math.abs(nA.y) > 0.5) {
+      // Snapped top/bottom: Flush sides and BACK (wall)
+      let flush_shiftX = boxA.min.x - boxS.min.x;
+      nx = source.pos[0] + flush_shiftX;
+      let flush_shiftZ = boxA.max.z - boxS.max.z;
+      ny = source.pos[1] - flush_shiftZ;
+    } else if (Math.abs(nA.z) > 0.5) {
+      // Snapped front/back: Flush sides and bottom
+      let flush_shiftX = boxA.min.x - boxS.min.x;
+      nx = source.pos[0] + flush_shiftX;
+      let flush_shiftY = boxA.min.y - boxS.min.y;
+      nz = source.pos[2] + flush_shiftY;
+    }
+
+    // Ensure values are cleanly rounded to 1 decimal place to prevent drift
+    source.pos = [
+      Math.round(nx * 10) / 10,
+      Math.round(ny * 10) / 10,
+      Math.round(nz * 10) / 10
+    ];
+
+    updateModule3D(srcIdx);
+    
+    if (srcIdx === state.selectedPlanIdx) {
+      setPos('x', source.pos[0]);
+      setPos('y', source.pos[1]);
+      setPos('z', source.pos[2]);
+      setPos('r', source.r);
+    }
+    
+    renderPlanList();
+    showNotification("Elementi precizno spojeni!", "success");
+  } catch (err) {
+    console.error("Snapping error:", err);
+    showNotification("Greška pri spajanju elemenata.", "error");
+  }
+}
+
 function selectModuleByIndex(idx) {
   if (idx < 0 || idx >= state.plan.length) return;
   const item = state.plan[idx];
@@ -1902,6 +2086,14 @@ function initKrojnaModal() {
       showKrojnaLista();
     });
   }
+  const perModuleToggle = document.getElementById('krojna-per-module-toggle');
+  if (perModuleToggle) {
+    perModuleToggle.checked = state.perModuleKrojna;
+    perModuleToggle.addEventListener('change', e => {
+      state.perModuleKrojna = e.target.checked;
+      showKrojnaLista();
+    });
+  }
 }
 
 function showKrojnaLista() {
@@ -1910,110 +2102,147 @@ function showKrojnaLista() {
     return;
   }
 
-  const list = computeCuttingList(state.plan);
   const wrap = document.getElementById('krojna-table-wrap');
   const simple = state.simplifiedKrojna;
+  const perModule = state.perModuleKrojna;
+  let html = '';
 
-  // Group by material
-  const groups = {};
-  list.forEach(row => {
-    if (!groups[row.material]) groups[row.material] = [];
-    groups[row.material].push(row);
-  });
-
-  let html = `<table class="krojna-table">
-    <thead><tr>
-      <th>Naziv</th>
-      ${simple ? '<th>Dimenzije (cm)</th>' : '<th>Dimenzije (mm)</th>'}
-      <th style="text-align:center">Kom.</th>
-      ${simple ? '' : '<th>Površina (m²)</th><th>Mat (€)</th><th>Kant (€)</th><th>Ukupno (€)</th>'}
-      <th>Code</th>
-    </tr></thead><tbody>`;
-
-  let totalGrand = 0;
-  let totalGrandKant = 0;
-  let totalGrandMat = 0;
-
-  for (const [mat, rows] of Object.entries(groups)) {
-    const pSqm = getPriceForMaterial(mat);
-    const colCount = simple ? 4 : 8;
-    html += `<tr class="group-row"><td colspan="${colCount}">▸ ${mat} ${simple ? '' : `(${pSqm.toFixed(2)} €/m²)`}</td></tr>`;
-
-    let groupArea = 0;
-    let groupCost = 0;
-    let groupKantCost = 0;
-    let groupMatCost = 0;
-
-    rows.forEach(r => {
-      const area = (r.L * r.W) / 1000000 * r.qty;
-      const costMat = area * pSqm;
-
-      const k = calcKant(r.kant, r.L, r.W);
-      const costKant = (k.k * state.prices.kant_k + k.K * state.prices.kant_K) * r.qty;
-      const costTotal = costMat + costKant;
-
-      groupArea += area;
-      groupMatCost += costMat;
-      groupKantCost += costKant;
-      groupCost += costTotal;
-
-      totalGrandMat += costMat;
-      totalGrandKant += costKant;
-      totalGrand += costTotal;
-
-      if (simple) {
+  if (perModule) {
+    const modules = computeCuttingListByModule(state.plan);
+    html = `<div class="krojna-by-module">`;
+    
+    modules.forEach(m => {
+      if (m.panels.length === 0) return;
+      
+      html += `<div class="krojna-by-module-item">
+        <div class="krojna-by-module-header">
+           <span>[${m.index}] ${m.moduleName.replace(/_/g, ' ').toUpperCase()}</span>
+           <span style="opacity:0.8;">${m.panels.length} elemenata</span>
+        </div>
+        <table class="krojna-table" style="border:none;">
+          <thead><tr>
+            <th>Naziv</th>
+            ${simple ? '<th>Dimenzije (cm)</th>' : '<th>Dimenzije (mm)</th>'}
+            <th style="text-align:center">Kom.</th>
+            <th>Materijal</th>
+            <th>Code</th>
+          </tr></thead><tbody>`;
+      
+      m.panels.forEach(r => {
         html += `<tr>
           <td>${r.name}</td>
-          <td>${(r.L / 10).toFixed(1)} × ${(r.W / 10).toFixed(1)}</td>
+          <td>${simple ? `${(r.L / 10).toFixed(1)} × ${(r.W / 10).toFixed(1)}` : `${r.L} × ${r.W}`}</td>
           <td style="text-align:center">${r.qty}</td>
+          <td style="font-size:10px;">${r.material}</td>
           <td style="color:var(--text-secondary); font-size:9px;">${r.kant || ''}</td>
         </tr>`;
-      } else {
-        html += `<tr>
-          <td>${r.name}</td>
-          <td>${r.L} × ${r.W}</td>
-          <td style="text-align:center">${r.qty}</td>
-          <td>${area.toFixed(3)}</td>
-          <td>${costMat.toFixed(2)}</td>
-          <td style="color:var(--accent)">${costKant.toFixed(2)}</td>
-          <td style="color:var(--green); font-weight:700;">${costTotal.toFixed(2)}</td>
-          <td style="color:var(--text-secondary); font-size:9px;">${r.kant || ''}</td>
-        </tr>`;
-      }
+      });
+      
+      html += `</tbody></table></div>`;
+    });
+    html += `</div>`;
+  } else {
+    const list = computeCuttingList(state.plan);
+    // Group by material
+    const groups = {};
+    list.forEach(row => {
+      if (!groups[row.material]) groups[row.material] = [];
+      groups[row.material].push(row);
     });
 
-    if (!simple) {
-      html += `<tr style="background:rgba(79,122,255,0.05); font-weight:700;">
-        <td colspan="4" style="text-align:right">UKUPNO ZA ${mat}:</td>
-        <td>${groupMatCost.toFixed(2)} €</td>
-        <td style="color:var(--accent)">${groupKantCost.toFixed(2)} €</td>
-        <td colspan="2" style="color:var(--green)">${groupCost.toFixed(2)} €</td>
-      </tr>`;
+    html = `<table class="krojna-table">
+      <thead><tr>
+        <th>Naziv</th>
+        ${simple ? '<th>Dimenzije (cm)</th>' : '<th>Dimenzije (mm)</th>'}
+        <th style="text-align:center">Kom.</th>
+        ${simple ? '' : '<th>Površina (m²)</th><th>Mat (€)</th><th>Kant (€)</th><th>Ukupno (€)</th>'}
+        <th>Code</th>
+      </tr></thead><tbody>`;
+
+    let totalGrand = 0;
+    let totalGrandKant = 0;
+    let totalGrandMat = 0;
+
+    for (const [mat, rows] of Object.entries(groups)) {
+      const pSqm = getPriceForMaterial(mat);
+      const colCount = simple ? 4 : 8;
+      html += `<tr class="group-row"><td colspan="${colCount}">▸ ${mat} ${simple ? '' : `(${pSqm.toFixed(2)} €/m²)`}</td></tr>`;
+
+      let groupArea = 0;
+      let groupCost = 0;
+      let groupKantCost = 0;
+      let groupMatCost = 0;
+
+      rows.forEach(r => {
+        const area = (r.L * r.W) / 1000000 * r.qty;
+        const costMat = area * pSqm;
+
+        const k = calcKant(r.kant, r.L, r.W);
+        const costKant = (k.k * state.prices.kant_k + k.K * state.prices.kant_K) * r.qty;
+        const costTotal = costMat + costKant;
+
+        groupArea += area;
+        groupMatCost += costMat;
+        groupKantCost += costKant;
+        groupCost += costTotal;
+
+        totalGrandMat += costMat;
+        totalGrandKant += costKant;
+        totalGrand += costTotal;
+
+        if (simple) {
+          html += `<tr>
+            <td>${r.name}</td>
+            <td>${(r.L / 10).toFixed(1)} × ${(r.W / 10).toFixed(1)}</td>
+            <td style="text-align:center">${r.qty}</td>
+            <td style="color:var(--text-secondary); font-size:9px;">${r.kant || ''}</td>
+          </tr>`;
+        } else {
+          html += `<tr>
+            <td>${r.name}</td>
+            <td>${r.L} × ${r.W}</td>
+            <td style="text-align:center">${r.qty}</td>
+            <td>${area.toFixed(3)}</td>
+            <td>${costMat.toFixed(2)}</td>
+            <td style="color:var(--accent)">${costKant.toFixed(2)}</td>
+            <td style="color:var(--green); font-weight:700;">${costTotal.toFixed(2)}</td>
+            <td style="color:var(--text-secondary); font-size:9px;">${r.kant || ''}</td>
+          </tr>`;
+        }
+      });
+
+      if (!simple) {
+        html += `<tr style="background:rgba(79,122,255,0.05); font-weight:700;">
+          <td colspan="4" style="text-align:right">UKUPNO ZA ${mat}:</td>
+          <td>${groupMatCost.toFixed(2)} €</td>
+          <td style="color:var(--accent)">${groupKantCost.toFixed(2)} €</td>
+          <td colspan="2" style="color:var(--green)">${groupCost.toFixed(2)} €</td>
+        </tr>`;
+      }
     }
-  }
 
-  html += '</tbody></table>';
+    html += '</tbody></table>';
 
-  // Summary
-  if (!simple) {
+    // Summary
     const totalPcs = list.reduce((s, r) => s + r.qty, 0);
-    html += `<div style="margin-top:12px;padding:12px;background:var(--bg-panel);border:1px solid var(--accent);border-radius:12px;display:flex;justify-content:space-between;align-items:center;">
-      <div style="font-size:11px;color:var(--text-secondary); line-height:1.4;">
-        <strong style="color:var(--accent)">Ukupno stavki: ${list.length}</strong> · Komada: ${totalPcs}<br>
-        Materijal: <strong>${totalGrandMat.toFixed(2)} €</strong> · 
-        <span style="color:var(--accent)">Kantovanje: <strong>${totalGrandKant.toFixed(2)} €</strong></span>
-      </div>
-      <div style="text-align:right;">
-        <div style="font-size:10px; color:var(--text-secondary); margin-bottom:2px; font-weight:700; letter-spacing:1px;">UKUPNA VRIJEDNOST</div>
-        <div style="font-size:24px; font-weight:900; color:var(--green);">${totalGrand.toFixed(2)} €</div>
-        <div style="font-size:12px; font-weight:600; color:var(--text-secondary); opacity:0.7;">${(totalGrand * 117).toLocaleString('sr-RS')} RSD</div>
-      </div>
-    </div>`;
-  } else {
-    const totalPcs = list.reduce((s, r) => s + r.qty, 0);
-    html += `<div style="margin-top:8px; font-size:10px; color:var(--text-dim); text-align:right;">
-       Ukupno komada: ${totalPcs}
-     </div>`;
+    if (!simple) {
+      html += `<div style="margin-top:12px;padding:12px;background:var(--bg-panel);border:1px solid var(--accent);border-radius:12px;display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-size:11px;color:var(--text-secondary); line-height:1.4;">
+          <strong style="color:var(--accent)">Ukupno stavki: ${list.length}</strong> · Komada: ${totalPcs}<br>
+          Materijal: <strong>${totalGrandMat.toFixed(2)} €</strong> · 
+          <span style="color:var(--accent)">Kantovanje: <strong>${totalGrandKant.toFixed(2)} €</strong></span>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:10px; color:var(--text-secondary); margin-bottom:2px; font-weight:700; letter-spacing:1px;">UKUPNA VRIJEDNOST</div>
+          <div style="font-size:24px; font-weight:900; color:var(--green);">${totalGrand.toFixed(2)} €</div>
+          <div style="font-size:12px; font-weight:600; color:var(--text-secondary); opacity:0.7;">${(totalGrand * 117).toLocaleString('sr-RS')} RSD</div>
+        </div>
+      </div>`;
+    } else {
+      html += `<div style="margin-top:8px; font-size:10px; color:var(--text-dim); text-align:right;">
+         Ukupno komada: ${totalPcs}
+       </div>`;
+    }
   }
 
   wrap.innerHTML = html;

@@ -1339,6 +1339,32 @@ body.light .plan-item-delete {
   padding: 6px 12px;
 }
 
+.krojna-by-module-header {
+  background: var(--accent);
+  color: #fff;
+  padding: 8px 14px;
+  border-radius: 8px 8px 0 0;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.krojna-by-module-item {
+  margin-bottom: 24px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+}
+
+body.light .krojna-by-module-item {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+}
+
 /* ── Material Picker ───────────────────────────────────── */
 .mat-sections {
   display: flex;

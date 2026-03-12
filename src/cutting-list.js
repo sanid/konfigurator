@@ -89,6 +89,13 @@ function panels_vrata_sudo_masine(p) {
   ];
 }
 
+function panels_vrata_sudo_masine_gola(p) {
+  const { s, v, d, c } = p;
+  return [
+    { material: 'MDF 18MM', name: 'vrata_sudo_masine gola mdf', L: mm(v - c - 3.3), W: mm(s - 0.3), qty: 1, kant: '2d i 2k' }
+  ];
+}
+
 function panels_radni_stol_rerne(p) {
   const { s, v, d, c, rerna = 58.5 } = p;
   const parts = [];
@@ -309,7 +316,7 @@ const PANEL_FNS = {
   fiokar: panels_fiokar,
   fiokar_gola: panels_fiokar_gola,
   vrata_sudo_masine: panels_vrata_sudo_masine,
-  vrata_sudo_masine_gola: panels_vrata_sudo_masine,
+  vrata_sudo_masine_gola: panels_vrata_sudo_masine_gola,
   radni_stol_rerne: panels_radni_stol_rerne,
   radni_stol_rerne_gola: panels_radni_stol_rerne_gola,
   sporet: () => [],
@@ -375,6 +382,32 @@ export function computeCuttingList(plan) {
   return [...agg.values()].sort((a, b) => {
     const mc = a.material.localeCompare(b.material);
     return mc !== 0 ? mc : a.name.localeCompare(b.name);
+  });
+}
+
+/**
+ * computeCuttingListByModule — get panels for each individual module without aggregation.
+ * @param {Array} plan - Array of module records
+ * @returns {Array} Array of { moduleName, index, panels: [] }
+ */
+export function computeCuttingListByModule(plan) {
+  return plan.map((item, idx) => {
+    const fn = PANEL_FNS[item.ime];
+    if (!fn) return { moduleName: item.ime, index: idx + 1, panels: [] };
+
+    // Convert params to numbers
+    const p = {};
+    for (const [k, v] of Object.entries(item.p || {})) {
+      const n = parseFloat(v);
+      p[k] = isNaN(n) ? v : n;
+    }
+
+    const panels = fn(p);
+    return {
+      moduleName: item.ime,
+      index: idx + 1,
+      panels: (panels || []).filter(p => p && p.L > 0 && p.W > 0)
+    };
   });
 }
 
