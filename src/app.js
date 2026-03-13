@@ -118,11 +118,16 @@ document.addEventListener('DOMContentLoaded', () => {
   initKrojnaModal();
   initFixtureModal();
   initOverlayToggles();
+  initContextMenu();
   selectCell(2, 1);
   window.addEventListener('resize', resizeViewer);
 
   // Double click logic (Selection / Snapping / Special items)
   let snapAnchor = null;
+
+  // Expose for context menu "Set as Anchor"
+  window._setSnapAnchor = (info) => { snapAnchor = info; };
+  window._clearSnapAnchor = () => { snapAnchor = null; };
 
   const canvas = document.getElementById('three-canvas');
   if (canvas) {
@@ -1270,6 +1275,77 @@ function initPlanActions() {
   document.getElementById('btn-clear-plan')?.addEventListener('click', clearPlan);
 }
 
+// ─── Context Menu ──────────────────────────────────────────────────────────────
+let ctxTargetIdx = -1;
+
+function showCtxMenu(x, y, idx) {
+  ctxTargetIdx = idx;
+  const menu = document.getElementById('ctx-menu');
+  if (!menu) return;
+
+  // Clamp to viewport
+  menu.classList.remove('hidden');
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  const left = Math.min(x, window.innerWidth - mw - 4);
+  const top  = Math.min(y, window.innerHeight - mh - 4);
+  menu.style.left = left + 'px';
+  menu.style.top  = top  + 'px';
+}
+
+function hideCtxMenu() {
+  document.getElementById('ctx-menu')?.classList.add('hidden');
+  ctxTargetIdx = -1;
+}
+
+function initContextMenu() {
+  const menu = document.getElementById('ctx-menu');
+  if (!menu) return;
+
+  document.getElementById('ctx-mirror')?.addEventListener('click', () => {
+    if (ctxTargetIdx >= 0) mirrorModule(ctxTargetIdx);
+    hideCtxMenu();
+  });
+  document.getElementById('ctx-duplicate')?.addEventListener('click', () => {
+    if (ctxTargetIdx >= 0) duplicateModule(ctxTargetIdx);
+    hideCtxMenu();
+  });
+  document.getElementById('ctx-anchor')?.addEventListener('click', () => {
+    if (ctxTargetIdx >= 0) {
+      selectModuleByIndex(ctxTargetIdx);
+      // Simulate first dblclick anchor set — expose snapAnchor via a helper
+      setSnapAnchorByIndex(ctxTargetIdx);
+      showNotification('Sidro postavljeno. Dvaput klikni na element koji želiš spojiti.', 'info');
+    }
+    hideCtxMenu();
+  });
+  document.getElementById('ctx-remove')?.addEventListener('click', () => {
+    if (ctxTargetIdx >= 0) deleteModule(ctxTargetIdx);
+    hideCtxMenu();
+  });
+
+  // Close on any click outside
+  document.addEventListener('click', (e) => {
+    if (!menu.contains(e.target)) hideCtxMenu();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hideCtxMenu();
+  });
+
+  // Right-click on 3D canvas
+  const canvas = document.getElementById('three-canvas');
+  canvas?.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    const ny = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    const idx = getModuleIndexAt(nx, ny);
+    if (idx !== null) {
+      selectModuleByIndex(idx);
+      showCtxMenu(e.clientX, e.clientY, idx);
+    }
+  });
+}
+
 // ─── Auto-save to localStorage ────────────────────────────────────────────────
 const AUTO_SAVE_KEY = 'meco_autosave';
 
@@ -1959,6 +2035,56 @@ function deleteModule(idx) {
   updateTotalCost();
 }
 
+function setSnapAnchorByIndex(idx) {
+  // Build a minimal snapInfo from the module's bounding box center face
+  // We use the module group directly — the normal will be the front face
+  const group = getModuleGroup(idx);
+  if (!group) return;
+  group.updateWorldMatrix(true, true);
+  const box = new THREE.Box3().setFromObject(group);
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+  const info = { index: idx, normal: new THREE.Vector3(0, 0, -1), point: center };
+  if (window._setSnapAnchor) window._setSnapAnchor(info);
+}
+
+function mirrorModule(idx) {
+  if (idx < 0 || idx >= state.plan.length) return;
+  const item = state.plan[idx];
+  // Mirror = rotate by 90° (cycles through 0→90→180→270→0)
+  // For corner elements specifically this flips which wall faces which direction.
+  item.r = (item.r + 90) % 360;
+  updateModule3D(idx);
+  if (idx === state.selectedPlanIdx) setPos('r', item.r);
+  renderPlanList();
+  showNotification('Element zrcaljen', 'success');
+}
+
+function duplicateModule(idx) {
+  if (idx < 0 || idx >= state.plan.length) return;
+  const src = state.plan[idx];
+  // Deep-copy the entry, offset position slightly so it's visible
+  const copy = {
+    ime: src.ime,
+    p: { ...src.p },
+    pos: [src.pos[0] + 10, src.pos[1], src.pos[2]],
+    r: src.r
+  };
+  if (src.mat_pos) copy.mat_pos = [...src.mat_pos];
+  state.plan.push(copy);
+  const newIdx = state.plan.length - 1;
+  try {
+    const group = buildKitchenModule(
+      copy.ime, copy.p, state.materials, state.settings,
+      copy.pos[0], copy.pos[1], copy.pos[2], copy.r
+    );
+    addModuleGroup(newIdx, group);
+  } catch (e) { console.error('3D build failed for duplicate', e); }
+  selectModuleByIndex(newIdx);
+  renderPlanList();
+  showNotification('Element dupliciran', 'success');
+}
+
 function clearPlan() {
   if (state.plan.length === 0) return;
   if (!confirm('Obrisati sve module iz plana?')) return;
@@ -2192,6 +2318,12 @@ function renderPlanList() {
 
     el.addEventListener('click', () => {
       selectModuleByIndex(idx);
+    });
+
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      selectModuleByIndex(idx);
+      showCtxMenu(e.clientX, e.clientY, idx);
     });
 
     list.appendChild(el);
