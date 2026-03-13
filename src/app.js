@@ -203,6 +203,9 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   }
+
+  // Restore last session from localStorage
+  autoRestore();
 });
 
 // ─── Prices ───────────────────────────────────────────────────────────────────
@@ -1262,6 +1265,86 @@ function initPlanActions() {
   // Save / Load project
   document.getElementById('btn-save-project')?.addEventListener('click', saveProject);
   document.getElementById('btn-load-project')?.addEventListener('click', loadProject);
+
+  // Clear plan
+  document.getElementById('btn-clear-plan')?.addEventListener('click', clearPlan);
+}
+
+// ─── Auto-save to localStorage ────────────────────────────────────────────────
+const AUTO_SAVE_KEY = 'meco_autosave';
+
+function autoSave() {
+  try {
+    const data = {
+      version: 1,
+      plan: state.plan,
+      occupiedCells: state.occupiedCells,
+      materials: state.materials,
+      settings: state.settings,
+      prices: state.prices,
+      wallFixtures: state.wallFixtures,
+      position: state.position,
+      selectedCell: state.selectedCell,
+      clientName: document.getElementById('client-name')?.value || state.clientName,
+      simplifiedKrojna: state.simplifiedKrojna,
+      lightingMode: state.lightingMode
+    };
+    localStorage.setItem(AUTO_SAVE_KEY, JSON.stringify(data));
+  } catch (e) {
+    // localStorage full or unavailable — silently ignore
+  }
+}
+
+function autoRestore() {
+  try {
+    const raw = localStorage.getItem(AUTO_SAVE_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (!data.version || !data.plan || data.plan.length === 0) return;
+
+    state.materials = { ...DEFAULT_MATERIALS, ...data.materials };
+    state.settings = { ...DEFAULT_SETTINGS, ...data.settings };
+    state.prices = { ...state.prices, ...data.prices };
+    state.plan = data.plan;
+    state.occupiedCells = data.occupiedCells || {};
+    state.wallFixtures = data.wallFixtures || [];
+    state.position = data.position || { x: 0, y: 0, z: 0, r: 0 };
+    state.selectedCell = data.selectedCell || [2, 1];
+    state.simplifiedKrojna = data.simplifiedKrojna || false;
+    state.lightingMode = data.lightingMode || 'warm';
+
+    if (data.clientName) {
+      state.clientName = data.clientName;
+      const el = document.getElementById('client-name');
+      if (el) el.value = data.clientName;
+    }
+
+    initMaterialsPanel();
+    initToggles();
+
+    clearAllGroups();
+    clearFixtureMarkers();
+    state.plan.forEach((entry, idx) => {
+      try {
+        const group = buildKitchenModule(
+          entry.ime, entry.p, state.materials, state.settings,
+          entry.pos[0], entry.pos[1], entry.pos[2], entry.r || 0
+        );
+        addModuleGroup(idx, group);
+      } catch (e) { console.warn('Auto-restore: failed to rebuild module', idx, e); }
+    });
+    state.wallFixtures.forEach((fixture, idx) => {
+      try { addFixtureMarker(idx, fixture); } catch (e) { }
+    });
+
+    renderPlanList();
+    updateWallGridDisplay();
+    updateTotalCost();
+    setLightingMode(state.lightingMode);
+    showNotification('Radni prostor vraćen', 'info');
+  } catch (e) {
+    console.warn('Auto-restore failed:', e);
+  }
 }
 
 // ─── Project Save / Load ───────────────────────────────────────────────────────
@@ -1876,6 +1959,23 @@ function deleteModule(idx) {
   updateTotalCost();
 }
 
+function clearPlan() {
+  if (state.plan.length === 0) return;
+  if (!confirm('Obrisati sve module iz plana?')) return;
+  state.plan = [];
+  state.occupiedCells = {};
+  state.selectedPlanIdx = -1;
+  editingPlanIdx = -1;
+  clearAllGroups();
+  setPos('x', 0); setPos('y', 0); setPos('z', 0); setPos('r', 0);
+  selectCell(2, 1);
+  refreshParams();
+  updateWallGridDisplay();
+  renderPlanList();
+  updateTotalCost();
+  autoSave();
+}
+
 function rebuildAllModules() {
   clearAllGroups();
   state.plan.forEach((item, idx) => {
@@ -2098,6 +2198,7 @@ function renderPlanList() {
   });
 
   updateTotalCost();
+  autoSave();
 }
 
 // ─── Material Picker Modal ────────────────────────────────────────────────────
