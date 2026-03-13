@@ -2051,9 +2051,10 @@ function setSnapAnchorByIndex(idx) {
 function mirrorModule(idx) {
   if (idx < 0 || idx >= state.plan.length) return;
   const item = state.plan[idx];
-  // Mirror = rotate by 90° (cycles through 0→90→180→270→0)
-  // For corner elements specifically this flips which wall faces which direction.
-  item.r = (item.r + 90) % 360;
+  // True mirror of an L-shape: toggle between r and r±90°.
+  // Origin = inner corner of the L, so position stays fixed.
+  // 0↔90, 180↔270 — flips which arm goes which direction.
+  item.r = (item.r % 180 === 0) ? (item.r + 90) % 360 : (item.r + 270) % 360;
   updateModule3D(idx);
   if (idx === state.selectedPlanIdx) setPos('r', item.r);
   renderPlanList();
