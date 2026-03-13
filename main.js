@@ -69,3 +69,18 @@ ipcMain.handle('open-file', async (event, { extName, ext }) => {
   const content = fs.readFileSync(filePaths[0], 'utf-8');
   return { success: true, content, filePath: filePaths[0] };
 });
+
+ipcMain.handle('save-files-to-folder', async (event, { files, defaultFolder }) => {
+  const { filePaths, canceled } = await dialog.showOpenDialog({
+    title: 'Odaberi folder za MPR fajlove',
+    properties: ['openDirectory', 'createDirectory'],
+    defaultPath: defaultFolder || app.getPath('documents')
+  });
+  if (canceled || !filePaths.length) return { success: false };
+  const folder = filePaths[0];
+  for (const { filename, content } of files) {
+    fs.writeFileSync(path.join(folder, filename), content, 'utf8');
+  }
+  shell.openPath(folder);
+  return { success: true, folder, count: files.length };
+});

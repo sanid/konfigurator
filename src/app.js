@@ -82,6 +82,7 @@ let state = {
   },
   simplifiedKrojna: false,
   perModuleKrojna: false,
+  mprSettings: { D: 18, BRR: 4, EX: 24, F: 20, BRP: 1, TR: 70 },
   wallFixtures: [],   // Array of { type, x, y, label }  — x/y in cm from origin
   addingRadnaPloca: false,
   addingCokla: false,
@@ -2473,6 +2474,430 @@ function openInputModal(label, defaultVal, callback) {
   _inputModalResolve = callback;
 }
 
+// ─── MPR Generation ───────────────────────────────────────────────────────────
+function generateMPRContent(L_mm, B_mm, settings = {}) {
+  const { D = 18, BRR = 4, EX = 24, F = 20, BRP = 1, TR = 70 } = settings;
+  const L = Math.round(L_mm);
+  const B = Math.round(B_mm);
+  const Dv = Math.round(D);
+  const f6 = v => `${Math.round(v)}.000000`;
+
+  const lines = [
+    '[H',
+    'VERSION="4.0 Alpha"',
+    'WW="9.0.152"',
+    'OP="1"',
+    'WRK2="0"',
+    'SCHN="0"',
+    'CVR="0"',
+    'POI="0"',
+    'HSP="0"',
+    'O2="0"',
+    'O4="0"',
+    'O3="0"',
+    'O5="0"',
+    'SR="0"',
+    'FM="1"',
+    'ML="2000"',
+    'UF="20"',
+    'ZS="20"',
+    'DN="STANDARD"',
+    'DST="0"',
+    'GP="0"',
+    'GY="0"',
+    'GXY="0"',
+    'NP="1"',
+    'NE="0"',
+    'NA="0"',
+    'BFS="0"',
+    'US="0"',
+    'CB="0"',
+    'UP="0"',
+    'DW="0"',
+    'MAT="HOMAG"',
+    'HP_A_O="STANDARD"',
+    'OVD_U="1"',
+    'OVD="0"',
+    'OHD_U="0"',
+    'OHD="2"',
+    'OOMD_U="0"',
+    'EWL="1"',
+    'INCH="0"',
+    'VIEW="NOMIRROR"',
+    'ANZ="1"',
+    'BES="0"',
+    'ENT="0"',
+    'MATERIAL=""',
+    'CUSTOMER=""',
+    'ORDER=""',
+    'ARTICLE=""',
+    'PARTID=""',
+    'PARTTYPE=""',
+    'MPRCOUNT="1"',
+    'MPRNUMBER="1"',
+    'INFO1=""',
+    'INFO2=""',
+    'INFO3=""',
+    'INFO4=""',
+    'INFO5=""',
+    `_BSX=${f6(L)}`,
+    `_BSY=${f6(B)}`,
+    `_BSZ=${f6(Dv)}`,
+    '_FNX=0.000000',
+    '_FNY=0.000000',
+    '_RNX=0.000000',
+    '_RNY=0.000000',
+    '_RNZ=0.000000',
+    `_RX=${f6(L)}`,
+    `_RY=${f6(B)}`,
+    '',
+    '[001',
+    `L="${L}"`,
+    'KM="Laenge in X"',
+    `B="${B}"`,
+    'KM="Breite in Y"',
+    `D="${Dv}"`,
+    'KM="Dicke in Z"',
+    `BRR="${BRR}"`,
+    'KM="Broj rupa"',
+    `EX="${EX}"`,
+    'KM="Excentar"',
+    `F="${F}"`,
+    'KM="Falc"',
+    `BRP="${BRP}"`,
+    'KM="Broj polica"',
+    `TR="${TR}"`,
+    'KM="Traverza"',
+    '',
+    '<100 \\WerkStck\\',
+    'LA="L"',
+    'BR="B"',
+    'DI="D"',
+    'FNX="0"',
+    'FNY="0"',
+    'AX="0"',
+    'AY="0"',
+    '',
+    '<109 \\Nuten\\',
+    'XA="0"',
+    'YA="_BSY-F"',
+    'WI="0"',
+    'XE="_BSX"',
+    'YE="_BSY-F"',
+    'RK="WRKL"',
+    'EM="MOD2"',
+    'AD="0"',
+    'TI="7"',
+    'TV="0"',
+    'VT="0"',
+    'MV="GL"',
+    'XY="100"',
+    'MN="GL"',
+    'BL="0"',
+    'OP="0"',
+    'AN="0"',
+    'F_="5"',
+    'MT="0"',
+    'HU="0"',
+    'UZU="1"',
+    'ZU="0"',
+    'SM="0"',
+    'S_="STANDARD"',
+    'HP="0"',
+    'SP="0"',
+    'YVE="0"',
+    'WW="40,41,42,43,45,49,144,145,146,147,152,156,157"',
+    'ASG="2"',
+    'HP_A_O="STANDARD"',
+    'KAT="Nuten"',
+    'MNM="Vertical sawing"',
+    'ORI="1"',
+    'MX="0"',
+    'MY="0"',
+    'MZ="0"',
+    'MXF="1"',
+    'MYF="1"',
+    'MZF="1"',
+    'SYA="0"',
+    'SYV="0"',
+    'KO="00"',
+    '',
+    '<102 \\BohrVert\\',
+    'XA="D/2"',
+    'YA="(B-F)/2"',
+    'BM="LS"',
+    'TI="14"',
+    'DU="8"',
+    'AN="BRR-2"',
+    'MI="1"',
+    'S_="1"',
+    'S_P="100"',
+    'AB="(B-F)/BRR"',
+    'WI="90"',
+    'ZT="0"',
+    'RM="0"',
+    'VW="0"',
+    'HP="0"',
+    'SP="0"',
+    'YVE="0"',
+    'WW="60,61,62,86,87,88,90,91,92,148,149,150,191,192"',
+    'ASG="2"',
+    'HP_A_O="STANDARD"',
+    'KAT="Bohren vertikal"',
+    'MNM="Vertical drilling"',
+    'ORI="2"',
+    'MX="0"',
+    'MY="0"',
+    'MZ="0"',
+    'MXF="1"',
+    'MYF="1"',
+    'MZF="1"',
+    'SYA="0"',
+    'SYV="0"',
+    'KO="00"',
+    '',
+    '<102 \\BohrVert\\',
+    'XA="D/2"',
+    'YA="(B-F)/2"',
+    'BM="LS"',
+    'TI="12"',
+    'DU="5"',
+    'AN="2"',
+    'MI="1"',
+    'S_="1"',
+    'S_P="100"',
+    'AB="(B-F)/BRR*(BRR-1)"',
+    'WI="90"',
+    'ZT="0"',
+    'RM="0"',
+    'VW="0"',
+    'HP="0"',
+    'SP="0"',
+    'YVE="0"',
+    'WW="60,61,62,86,87,88,90,91,92,148,149,150,191,192"',
+    'ASG="2"',
+    'HP_A_O="STANDARD"',
+    'KAT="Bohren vertikal"',
+    'MNM="Vertical drilling"',
+    'ORI="3"',
+    'MX="0"',
+    'MY="0"',
+    'MZ="0"',
+    'MXF="1"',
+    'MYF="1"',
+    'MZF="1"',
+    'SYA="0"',
+    'SYV="0"',
+    'KO="00"',
+    '',
+    // ORI=4 — Traverza top (ekscentar Ø8, TI=14)
+    '<102 \\BohrVert\\',
+    'XA="L-D/2"',
+    'YA="TR/2"',
+    'BM="LS"',
+    'TI="14"',
+    'DU="8"',
+    'AN="2"',
+    'MI="1"',
+    'S_="1"',
+    'S_P="100"',
+    'AB="TR/2"',
+    'WI="90"',
+    'ZT="0"',
+    'RM="0"',
+    'VW="0"',
+    'HP="0"',
+    'SP="0"',
+    'YVE="0"',
+    'WW="60,61,62,86,87,88,90,91,92,148,149,150,191,192"',
+    'ASG="2"',
+    'HP_A_O="STANDARD"',
+    'KAT="Bohren vertikal"',
+    'MNM="Vertical drilling"',
+    'ORI="4"',
+    'MX="0"',
+    'MY="0"',
+    'MZ="0"',
+    'MXF="1"',
+    'MYF="1"',
+    'MZF="1"',
+    'SYA="0"',
+    'SYV="0"',
+    'KO="00"',
+    '',
+    // ORI=5 — Traverza bottom (ekscentar Ø8, TI=14)
+    '<102 \\BohrVert\\',
+    'XA="L-D/2"',
+    'YA="B-F-TR/2"',
+    'BM="LS"',
+    'TI="14"',
+    'DU="8"',
+    'AN="2"',
+    'MI="1"',
+    'S_="1"',
+    'S_P="100"',
+    'AB="TR/2"',
+    'WI="90"',
+    'ZT="0"',
+    'RM="0"',
+    'VW="0"',
+    'HP="0"',
+    'SP="0"',
+    'YVE="0"',
+    'WW="60,61,62,86,87,88,90,91,92,148,149,150,191,192"',
+    'ASG="2"',
+    'HP_A_O="STANDARD"',
+    'KAT="Bohren vertikal"',
+    'MNM="Vertical drilling"',
+    'ORI="5"',
+    'MX="0"',
+    'MY="0"',
+    'MZ="0"',
+    'MXF="1"',
+    'MYF="1"',
+    'MZF="1"',
+    'SYA="0"',
+    'SYV="0"',
+    'KO="00"',
+    '',
+    // ORI=6 — Police prednja strana (Ø5, BRP rupa po polici, WI=900)
+    '<102 \\BohrVert\\',
+    'XA="(L-D)/2"',
+    'YA="65"',
+    'BM="LS"',
+    'TI="12"',
+    'DU="5"',
+    'AN="BRP"',
+    'MI="1"',
+    'S_="1"',
+    'S_P="100"',
+    'AB="(L-D)/(BRP+1)"',
+    'WI="900"',
+    'ZT="0"',
+    'RM="0"',
+    'VW="0"',
+    'HP="0"',
+    'SP="0"',
+    'YVE="0"',
+    'WW="60,61,62,86,87,88,90,91,92,148,149,150,191,192"',
+    'ASG="2"',
+    'HP_A_O="STANDARD"',
+    'KAT="Bohren vertikal"',
+    'MNM="Vertical drilling"',
+    'ORI="6"',
+    'MX="0"',
+    'MY="0"',
+    'MZ="0"',
+    'MXF="1"',
+    'MYF="1"',
+    'MZF="1"',
+    'SYA="0"',
+    'SYV="0"',
+    'KO="00"',
+    '',
+    // ORI=7 — Police zadnja strana (Ø5, BRP rupa po polici, WI=900)
+    '<102 \\BohrVert\\',
+    'XA="(L-D)/2"',
+    'YA="B-F-32"',
+    'BM="LS"',
+    'TI="12"',
+    'DU="5"',
+    'AN="BRP"',
+    'MI="1"',
+    'S_="1"',
+    'S_P="100"',
+    'AB="(L-D)/(BRP+1)"',
+    'WI="900"',
+    'ZT="0"',
+    'RM="0"',
+    'VW="0"',
+    'HP="0"',
+    'SP="0"',
+    'YVE="0"',
+    'WW="60,61,62,86,87,88,90,91,92,148,149,150,191,192"',
+    'ASG="2"',
+    'HP_A_O="STANDARD"',
+    'KAT="Bohren vertikal"',
+    'MNM="Vertical drilling"',
+    'ORI="7"',
+    'MX="0"',
+    'MY="0"',
+    'MZ="0"',
+    'MXF="1"',
+    'MYF="1"',
+    'MZF="1"',
+    'SYA="0"',
+    'SYV="0"',
+    'KO="00"',
+    '!'
+  ];
+  return lines.join('\r\n');
+}
+
+function getMPRPanel(moduleItem) {
+  // Find the side panel (stranica/stranice) for MPR generation
+  const panels = moduleItem.panels || [];
+  return panels.find(p => p.name.includes('stran')) || panels[0] || null;
+}
+
+function getMPRSettings(planIdx) {
+  // Merge global mprSettings with module-specific BRP (broj polica) auto-read from plan params
+  const settings = { ...state.mprSettings };
+  const planItem = state.plan[planIdx];
+  if (planItem?.p) {
+    const brp = parseInt(planItem.p.brp ?? planItem.p.BRP, 10);
+    if (!isNaN(brp) && brp >= 0) settings.BRP = brp;
+  }
+  return settings;
+}
+
+async function exportModuleMPR(planIdx) {
+  const modules = computeCuttingListByModule(state.plan);
+  const m = modules[planIdx];
+  if (!m || m.panels.length === 0) {
+    showNotification('Nema panela za ovaj modul!', 'warning');
+    return;
+  }
+  const panel = getMPRPanel(m);
+  if (!panel) { showNotification('Nema stranica za MPR!', 'warning'); return; }
+
+  const settings = getMPRSettings(planIdx);
+  const content = generateMPRContent(panel.L, panel.W, settings);
+  const safeName = m.moduleName.replace(/[^a-zA-Z0-9_]/g, '_');
+  const filename = `${m.index}_${safeName}_${panel.L}x${panel.W}.mpr`;
+
+  const res = await window.electronAPI?.saveFile({
+    filename,
+    ext: 'mpr',
+    extName: 'MPR CNC',
+    content,
+    encoding: 'utf8'
+  });
+  if (res?.success) showNotification(`MPR sačuvan: ${filename} (BRP=${settings.BRP})`, 'success');
+}
+
+async function exportAllMPR() {
+  if (state.plan.length === 0) { showNotification('Plan je prazan!', 'warning'); return; }
+
+  const modules = computeCuttingListByModule(state.plan);
+  const files = [];
+
+  modules.forEach((m, idx) => {
+    const panel = getMPRPanel(m);
+    if (!panel) return;
+    const settings = getMPRSettings(idx);
+    const content = generateMPRContent(panel.L, panel.W, settings);
+    const safeName = m.moduleName.replace(/[^a-zA-Z0-9_]/g, '_');
+    const filename = `${m.index}_${safeName}_${panel.L}x${panel.W}.mpr`;
+    files.push({ filename, content });
+  });
+
+  if (files.length === 0) { showNotification('Nema MPR fajlova za eksport!', 'warning'); return; }
+
+  const res = await window.electronAPI?.saveFilesToFolder({ files });
+  if (res?.success) showNotification(`${res.count} MPR fajlova sačuvano u ${res.folder}`, 'success');
+}
+
 // ─── Krojna Lista Modal ───────────────────────────────────────────────────────
 function initKrojnaModal() {
   const close = () => document.getElementById('modal-krojna').classList.add('hidden');
@@ -2480,6 +2905,7 @@ function initKrojnaModal() {
   document.getElementById('btn-modal-close').addEventListener('click', close);
   document.querySelector('#modal-krojna .modal-backdrop').addEventListener('click', close);
   document.getElementById('btn-export-krojna-csv').addEventListener('click', exportOptimik);
+  document.getElementById('btn-export-all-mpr').addEventListener('click', exportAllMPR);
 
   const toggle = document.getElementById('krojna-simplified-toggle');
   if (toggle) {
@@ -2497,6 +2923,28 @@ function initKrojnaModal() {
       showKrojnaLista();
     });
   }
+
+  // MPR settings inputs
+  const mprFields = ['D', 'BRR', 'EX', 'F', 'BRP', 'TR'];
+  for (const field of mprFields) {
+    const el = document.getElementById(`mpr-${field}`);
+    if (el) {
+      el.value = state.mprSettings[field];
+      el.addEventListener('change', e => {
+        const v = parseInt(e.target.value, 10);
+        if (!isNaN(v) && v >= 0) state.mprSettings[field] = v;
+      });
+    }
+  }
+
+  // Event delegation for per-module MPR buttons
+  document.getElementById('krojna-table-wrap').addEventListener('click', e => {
+    const btn = e.target.closest('.btn-mpr-module');
+    if (btn) {
+      const planIdx = parseInt(btn.dataset.planIdx, 10);
+      exportModuleMPR(planIdx);
+    }
+  });
 }
 
 function showKrojnaLista() {
@@ -2514,13 +2962,18 @@ function showKrojnaLista() {
     const modules = computeCuttingListByModule(state.plan);
     html = `<div class="krojna-by-module">`;
     
-    modules.forEach(m => {
+    modules.forEach((m, idx) => {
       if (m.panels.length === 0) return;
-      
+      const mprPanel = getMPRPanel(m);
+      const mprDims = mprPanel ? `${mprPanel.L}×${mprPanel.W}mm` : '';
+
       html += `<div class="krojna-by-module-item">
         <div class="krojna-by-module-header">
            <span>[${m.index}] ${m.moduleName.replace(/_/g, ' ').toUpperCase()}</span>
-           <span style="opacity:0.8;">${m.panels.length} elemenata</span>
+           <span style="display:flex; align-items:center; gap:8px;">
+             <span style="opacity:0.8;">${m.panels.length} elemenata</span>
+             ${mprPanel ? `<button class="btn btn-mpr-module" data-plan-idx="${idx}" style="padding:2px 8px; font-size:9px; background:var(--accent); color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:700; letter-spacing:0.5px;">⚙ MPR ${mprDims}</button>` : ''}
+           </span>
         </div>
         <table class="krojna-table" style="border:none;">
           <thead><tr>
