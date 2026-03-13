@@ -1506,7 +1506,11 @@ function addRadnaPlocaToModule(idx) {
   if (state.radnaPlocaSelection.length === 0) {
     state.radnaPlocaSelection.push(idx);
     import('./viewer.js').then(v => v.highlightModule(idx));
-    showNotification('Odabran početni element. Dvoklikni na završni element.', 'info');
+    if (isCornerElement(target)) {
+      showNotification('Ugaoni element odabran. Dvoklikni isti element ponovo za bočnu ploču uz zid — ili dvoklikni element na glavnom zidu za radnu ploču do ugla.', 'info');
+    } else {
+      showNotification('Odabran početni element. Dvoklikni na završni element.', 'info');
+    }
   } else {
     // Second element
     const idxA = state.radnaPlocaSelection[0];
@@ -1525,9 +1529,27 @@ function addRadnaPlocaToModule(idx) {
   }
 }
 
+const CORNER_ELEMENT_NAMES = new Set([
+  'dug_element_90', 'dug_element_90_gola',
+  'donji_ugaoni_element_45_sa_plocom', 'donji_ugaoni_element_45_sa_plocom_gola'
+]);
+
+function isCornerElement(entry) {
+  return CORNER_ELEMENT_NAMES.has(entry.ime);
+}
+
 function createSpanningRadnaPloca(idxA, idxB) {
   const tA = state.plan[idxA];
   const tB = state.plan[idxB];
+
+  const aIsCorner = isCornerElement(tA);
+  const bIsCorner = isCornerElement(tB);
+
+  // If a corner element is involved, use the split-countertop logic
+  if (aIsCorner || bIsCorner) {
+    createCornerRadnaPloca(idxA, idxB, aIsCorner ? idxA : idxB);
+    return;
+  }
 
   if (tA.r !== tB.r && idxA !== idxB) {
     showNotification('Elementi moraju biti na istom zidu (isti ugao)!', 'error');
@@ -1584,6 +1606,153 @@ function createSpanningRadnaPloca(idxA, idxB) {
 
   renderPlanList();
   showNotification(`Radna ploča dodana (L=${Math.round(finalL)}cm)!`, 'success');
+}
+
+/**
+ * Handles countertop creation when a corner element (dug_element_90) is involved.
+ *
+ * TWO INDEPENDENT OPERATIONS — the user runs these separately:
+ *
+ * A) Corner selected ALONE (idxA === idxB):
+ *    → Wall-side piece: a normal straight countertop covering the lss arm of the corner
+ *      cabinet (the arm going into the side wall). This is a plain slab l=lss, d=60
+ *      placed at the corner origin and rotated 90° relative to the corner's own rotation
+ *      so it runs along the side wall.
+ *
+ * B) Corner + another cabinet on the main wall:
+ *    → Main-wall piece: runs from the other cabinet up to 60cm BEFORE the side wall
+ *      (i.e. stops at the corner element's position in the primary-wall direction, not
+ *      overlapping the side piece). The slab ends at the corner origin; the remaining
+ *      60cm of depth is physically occupied by the side piece coming in from the side wall.
+ */
+function createCornerRadnaPloca(idxA, idxB, cornerIdx) {
+  const cornerEl = state.plan[cornerIdx];
+  const otherIdx = cornerIdx === idxA ? idxB : idxA;
+  const otherEl = state.plan[otherIdx];
+
+  const dss = parseFloat(cornerEl.p.dss || 80); // corner width along main wall (local +X)
+  const lss = parseFloat(cornerEl.p.lss || 90); // corner width along side wall (local -Y)
+  const hCorner = parseFloat(cornerEl.p.v || 82);
+  const d = 60;
+  const debljina = 3.8;
+
+  let topZ = cornerEl.pos[2] + hCorner;
+  if (otherIdx !== cornerIdx) {
+    const hOther = parseFloat(otherEl.p.v || otherEl.p.h || 82);
+    topZ = cornerEl.pos[2] + Math.max(hCorner, hOther);
+  }
+
+  // Confirmed coordinate system (from debug logs, corner at r=0, pos=[0,0,0]):
+  //   dss arm runs in local +X = world (cosR, sinR)  → at r=0: world +X ✓
+  //   lss arm runs in local -Y = world (sinR, -cosR) → at r=0: world -Y ✓
+  //     (verified: side cabinet at [0,-150,0] which is world -Y from corner origin)
+  //
+  // Two non-overlapping slabs:
+  //   MAIN-WALL slab: starts at corner origin [0,0], runs dss+otherCabinets in +X (local)
+  //                   rotation = cornerEl.r, length = dist(corner→farCabinet) + farCabinetWidth
+  //   SIDE-WALL slab: starts at corner origin, runs exactly lss in lss-direction
+  //                   rotation = (cornerEl.r + 270) % 360  [so local +X aligns with lss direction]
+  //                   length = lss  (covers the full lss footprint including corner square)
+  //
+  // The two slabs share the d×d corner square — that's fine because they butt up against
+  // each other (main slab depth goes into wall, side slab depth goes into other wall).
+  // No geometric overlap: they are on perpendicular walls.
+
+  const normaliseR = r => ((r % 360) + 360) % 360;
+  const cornerRad = cornerEl.r * Math.PI / 180;
+  // lss direction (local -Y in world): (sinR, -cosR)
+  // Verified at r=0: lssDir=(0,-1) → plan -Y ✓ (side cabinet was at y=-150)
+  const lssDirX =  Math.sin(cornerRad);
+  const lssDirY = -Math.cos(cornerRad);
+
+  // Side slab position formula (verified at r=0, corner=[0,0], lss=90, d=60):
+  //   r=270, pos=[0,-(d+len)], length=len → covers plan Y=-d..-(d+len)
+  //   The main-wall slab owns the d×d corner square (plan X=0..d, Y=0..-d).
+  //   Side slab always starts at Y=-d (skipping corner square) and extends further.
+  // General: sidePosX/Y = cornerEl.pos + (d + len) * lssDir
+  const sideR = normaliseR(cornerEl.r + 270);
+
+  // Helper: build the side slab for a given length
+  function makeSideSlab(len) {
+    const px = cornerEl.pos[0] + (d + len) * lssDirX;
+    const py = cornerEl.pos[1] + (d + len) * lssDirY;
+    const entry = {
+      ime: 'radna_ploca',
+      p: { l: String(len), d: String(d), debljina: String(debljina) },
+      pos: [px, py, topZ],
+      r: sideR
+    };
+    state.plan.push(entry);
+    try {
+      const g = buildKitchenModule(
+        'radna_ploca', entry.p, state.materials, state.settings,
+        px, py, topZ, sideR
+      );
+      addModuleGroup(state.plan.length - 1, g);
+    } catch (e) { console.error('3D build failed for side radna_ploca', e); }
+    return len;
+  }
+
+  if (otherIdx === cornerIdx) {
+    // ── Op A: Corner alone → side-wall piece covering lss arm (minus corner square) ──
+    const sideLen = lss - d;
+    if (sideLen <= 0) {
+      showNotification('lss nije veći od d, bočna ploča ne može biti kreirana.', 'error');
+      return;
+    }
+    makeSideSlab(sideLen);
+    renderPlanList();
+    showNotification(`Bočna radna ploča dodana (${Math.round(sideLen)}×${d}cm)`, 'success');
+
+  } else {
+    // ── Op B: Corner + other cabinet ─────────────────────────────────────────
+    // Detect which wall otherEl is on by comparing its rotation to the corner:
+    //   Main wall (dss direction): otherEl.r ≈ cornerEl.r
+    //   Side wall (lss direction): otherEl.r ≈ (cornerEl.r + 270) % 360
+    const rDiff = normaliseR(otherEl.r - cornerEl.r);
+    const onMainWall = rDiff < 45 || rDiff > 315;
+    const otherW = parseFloat(otherEl.p.s || otherEl.p.l || otherEl.p.dss || 60);
+    const dx = otherEl.pos[0] - cornerEl.pos[0];
+    const dy = otherEl.pos[1] - cornerEl.pos[1];
+    const dist = Math.hypot(dx, dy);
+
+    if (onMainWall) {
+      // Main-wall slab: starts at corner origin, extends through all selected cabinets.
+      // Length = dist(corner→otherEl) + otherW
+      const mainL = dist + otherW;
+      const entry = {
+        ime: 'radna_ploca',
+        p: { l: String(mainL), d: String(d), debljina: String(debljina) },
+        pos: [cornerEl.pos[0], cornerEl.pos[1], topZ],
+        r: cornerEl.r
+      };
+      state.plan.push(entry);
+      try {
+        const g = buildKitchenModule(
+          'radna_ploca', entry.p, state.materials, state.settings,
+          cornerEl.pos[0], cornerEl.pos[1], topZ, cornerEl.r
+        );
+        addModuleGroup(state.plan.length - 1, g);
+      } catch (e) { console.error('3D build failed for main-wall radna_ploca', e); }
+
+      renderPlanList();
+      showNotification(`Radna ploča (glavni zid) dodana (L=${Math.round(mainL)}cm)`, 'success');
+
+    } else {
+      // Side-wall slab: starts after corner square (Y=-d), extends to far edge of selected cabinet.
+      // At r=270, local+X = plan+Y, so a cabinet at pos[1]=-150 has its NEAR face at Y=-90
+      // and its origin (far end in lss direction) at Y=-150. dist=150 already reaches the far end.
+      // Slab length from Y=-d to Y=-dist = dist - d.
+      const sideLen = dist - d;
+      if (sideLen <= 0) {
+        showNotification('Kabinet je preblizu ugaonom elementu.', 'error');
+        return;
+      }
+      makeSideSlab(sideLen);
+      renderPlanList();
+      showNotification(`Radna ploča (bočni zid) dodana (L=${Math.round(sideLen)}cm)`, 'success');
+    }
+  }
 }
 
 function addCoklaToModule(idx) {

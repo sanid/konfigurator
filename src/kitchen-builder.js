@@ -887,6 +887,31 @@ function build_radna_ploca(p, mats, settings) {
 }
 
 /**
+ * radna_ploca_ugaona — L-shaped corner worktop
+ * l   = length of the primary arm (along X, the wall the user is building on)
+ * lss = length of the perpendicular arm going into the corner wall (along -Y)
+ * d   = countertop depth (default 60cm)
+ * debljina = thickness (default 3.8cm)
+ *
+ * The two slabs share the dss×d corner square so they fit together without overlap:
+ *   - Primary arm  : from X=0 to X=l,  Y=-d to Y=0   (full width)
+ *   - Perp arm     : from X=0 to X=d,  Y=-lss to Y=-d (only the portion beyond the corner square)
+ */
+function build_radna_ploca_ugaona(p, mats, settings) {
+  if (!settings.radna_ploca) return new THREE.Group();
+  const { l, lss = 60, d = 60, debljina = 3.8 } = p;
+  const g = { materials: {} };
+  // Primary arm along wall
+  addBox(g, l, d, debljina, 0, -d, 0, mats.radna);
+  // Perpendicular arm — starts at -d (avoiding overlap with primary arm corner square)
+  const perpLen = lss - d;
+  if (perpLen > 0) {
+    addBox(g, d, perpLen, debljina, 0, -lss, 0, mats.radna);
+  }
+  return g;
+}
+
+/**
  * cokla — plinth/kickboard
  */
 function build_cokla(p, mats, settings) {
@@ -1565,6 +1590,7 @@ const BUILDERS = {
   visoki_element_za_rernu_sa_fiokama: build_visoki_element_za_rernu_sa_fiokama,
   visoki_element_za_rernu_i_mikrotalasnu_pec_sa_fiokama: build_visoki_element_za_rernu_i_mikrotalasnu_pec_sa_fiokama,
   radna_ploca: build_radna_ploca,
+  radna_ploca_ugaona: build_radna_ploca_ugaona,
   cokla: build_cokla,
   ploca_za_kuvanje: build_ploca_za_kuvanje,
   sudopera: build_sudopera
