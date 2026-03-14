@@ -9,8 +9,10 @@ import {
   COLOR_PRESETS, TEXTURE_PRESETS
 } from './modules-config.js';
 import { buildKitchenModule } from './kitchen-builder.js';
-import { initViewer, addModuleGroup, removeModuleGroup, clearAllGroups, setCameraView, resetCamera, highlightModule, resizeViewer, setViewerTheme, addFixtureMarker, removeFixtureMarker, clearFixtureMarkers, setLightingMode, getModuleIndexAt, getModuleSnapInfoAt, getModuleGroup } from './viewer.js';
-import { computeCuttingList, computeCuttingListByModule, toCsvString } from './cutting-list.js';
+import { buildDynamicPlan, validatePresetPlan, PRESET_LAYOUTS } from './presets.js';
+import { t, setLocale } from './i18n.js';
+
+import { initViewer, addModuleGroup, removeModuleGroup, shiftModuleGroups, clearAllGroups, setCameraView, resetCamera, highlightModule, resizeViewer, setViewerTheme, addFixtureMarker, removeFixtureMarker, clearFixtureMarkers, setLightingMode, getModuleIndexAt, getModuleSnapInfoAt, getModuleGroup, showMeasurements, clearMeasurements } from './viewer.js';
 
 // ─── Wall Fixture Types ───────────────────────────────────────────────────────
 const FIXTURE_TYPES = [
@@ -35,25 +37,62 @@ const MAT_LABELS = {
 
 // Parameter human-readable abbreviations
 const PARAM_LABELS = {
-  s: 'Širina',
-  v: 'Visina',
-  d: 'Dubina',
-  c: 'Cokla',
-  brvr: 'Broj vrata',
-  brp: 'Broj polica',
-  brf: 'Broj fioka',
-  brfp: 'Plitke fioke',
-  brfd: 'Duboke fioke',
-  brv: 'Broj vrata',
-  rerna: 'Širina rerne',
-  dss: 'Širina desno',
-  lss: 'Širina lijevo',
-  sl: 'Širina lijevo',
-  sd: 'Širina desno',
-  ss: 'Širina stuba',
-  ds: 'Dubina stuba',
-  vs: 'Visina stuba'
+  s:    () => t('params.s'),
+  v:    () => t('params.v'),
+  d:    () => t('params.d'),
+  c:    () => t('params.c'),
+  brvr: () => t('params.brvr'),
+  brp:  () => t('params.brp'),
+  brf:  () => t('params.brf'),
+  brfp: () => t('params.brfp'),
+  brfd: () => t('params.brfd'),
+  brv:  () => t('params.brvr'),
+  rerna: () => t('params.rerna'),
+  dss:   () => t('params.dss'),
+  sl:    () => t('params.sl'),
+  sd:    () => t('params.sd'),
+  ss:    () => t('params.ss'),
+  ds:    () => t('params.ds'),
+  vs:    () => t('params.vs')
 };
+
+// Per-param min/max bounds (cm). Params not listed default to min=0, max=1000.
+const PARAM_BOUNDS = {
+  s:    { min: 10,  max: 400 },
+  v:    { min: 10,  max: 300 },
+  d:    { min: 10,  max: 150 },
+  c:    { min: 0,   max: 30  },
+  brvr: { min: 1,   max: 8   },
+  brv:  { min: 1,   max: 8   },
+  brp:  { min: 0,   max: 10  },
+  brf:  { min: 1,   max: 8   },
+  brfp: { min: 0,   max: 8   },
+  brfd: { min: 0,   max: 8   },
+  rerna:{ min: 10,  max: 100 },
+  dss:  { min: 10,  max: 400 },
+  lss:  { min: 10,  max: 400 },
+  sl:   { min: 10,  max: 400 },
+  sd:   { min: 10,  max: 400 },
+  ss:   { min: 5,   max: 200 },
+  ds:   { min: 5,   max: 150 },
+  vs:   { min: 5,   max: 300 },
+  l:    { min: 10,  max: 600 },
+};
+
+function clampParamValue(name, val) {
+  const bounds = PARAM_BOUNDS[name] || { min: 0, max: 1000 };
+  return Math.min(bounds.max, Math.max(bounds.min, parseFloat(val) || bounds.min));
+}
+
+function applyParamInputBounds(input, name) {
+  const bounds = PARAM_BOUNDS[name] || { min: 0, max: 1000 };
+  input.min = String(bounds.min);
+  input.max = String(bounds.max);
+  input.addEventListener('blur', () => {
+    const clamped = clampParamValue(name, input.value);
+    if (String(clamped) !== input.value) input.value = clamped;
+  });
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // STATE
@@ -86,8 +125,58 @@ let state = {
   wallFixtures: [],   // Array of { type, x, y, label }  — x/y in cm from origin
   addingRadnaPloca: false,
   addingCokla: false,
-  lightingMode: 'warm'
+  lightingMode: 'warm',
+  showMeasurements: true
 };
+
+// ─── History (Undo / Redo) ────────────────────────────────────────────────────
+const HISTORY_MAX = 50;
+const _history = { past: [], future: [] };
+
+function _clonePlanState() {
+  return {
+    plan: JSON.parse(JSON.stringify(state.plan)),
+    occupiedCells: JSON.parse(JSON.stringify(state.occupiedCells)),
+  };
+}
+
+function pushHistory() {
+  _history.past.push(_clonePlanState());
+  if (_history.past.length > HISTORY_MAX) _history.past.shift();
+  _history.future = [];
+}
+
+function _applySnapshot(snapshot) {
+  state.plan = snapshot.plan;
+  state.occupiedCells = snapshot.occupiedCells;
+  state.selectedPlanIdx = -1;
+  editingPlanIdx = -1;
+  rebuildAllModules();
+  refreshParams();
+  updateWallGridDisplay();
+  renderPlanList();
+  updateTotalCost();
+}
+
+function historyUndo() {
+  if (_history.past.length === 0) {
+    showNotification('Nema više koraka za poništiti', 'info');
+    return;
+  }
+  _history.future.push(_clonePlanState());
+  _applySnapshot(_history.past.pop());
+  showNotification(`Poništeno  (${_history.past.length} preostalo)`, 'info');
+}
+
+function historyRedo() {
+  if (_history.future.length === 0) {
+    showNotification('Nema više koraka za ponavljanje', 'info');
+    return;
+  }
+  _history.past.push(_clonePlanState());
+  _applySnapshot(_history.future.pop());
+  showNotification(`Ponavljeno  (${_history.future.length} preostalo)`, 'info');
+}
 
 // Material picker pending selection
 let pendingMatSel = null;
@@ -118,8 +207,11 @@ document.addEventListener('DOMContentLoaded', () => {
   initInputModal();
   initKrojnaModal();
   initFixtureModal();
+  initPresetModal();
   initOverlayToggles();
   initContextMenu();
+  initLanguageSwitcher();
+  updateUILabels();
   selectCell(2, 1);
   window.addEventListener('resize', resizeViewer);
 
@@ -176,33 +268,14 @@ document.addEventListener('DOMContentLoaded', () => {
       if (idx === null) {
         // Clicked outside: Deselect
         if (state.selectedPlanIdx !== -1) {
-          const item = state.plan[state.selectedPlanIdx];
-          const group = getModuleGroup(state.selectedPlanIdx);
-          if (group && item) {
-            group.updateWorldMatrix(true, true);
-            const box = new THREE.Box3().setFromObject(group);
-            
-            // "Right" side based on module rotation
-            if (item.r === 0 || item.r === 180 || item.r === 360) {
-              setPos('x', box.max.x); // Continue to the right
-              setPos('z', item.pos[2]); // Match height
-            } else if (item.r === 90 || item.r === 270) {
-              // Rotation 90 means it's along the Y wall-depth axis
-              // Three Z maps inversely to UI Y, so 'max Y' in UI is actually min Z in Three
-              // wait, Three Z is -UI Y. So UI Y = -Three Z.
-              // So max UI Y = - box.min.z
-              setPos('y', -box.min.z);
-              setPos('z', item.pos[2]);
-            }
-          }
+          state.selectedPlanIdx = -1;
+          editingPlanIdx = -1;
+          snapAnchor = null;
+          clearMeasurements();
+          highlightModule(-1);
+          refreshParams();
+          renderPlanList();
         }
-
-        state.selectedPlanIdx = -1;
-        editingPlanIdx = -1;
-        snapAnchor = null; // Clear snapping state
-        highlightModule(-1);
-        refreshParams();
-        renderPlanList();
       } else {
         // Clicked a module: Select it
         selectModuleByIndex(idx);
@@ -230,6 +303,8 @@ function initPriceInputs() {
 
   const btn = document.getElementById('btn-toggle-prices');
   if (btn) {
+    // prices-panel starts hidden, so button starts dimmed
+    btn.style.opacity = '0.5';
     btn.onclick = () => {
       const panel = document.getElementById('prices-panel');
       const isHidden = panel.classList.toggle('hidden');
@@ -264,12 +339,17 @@ function calcKant(kantStr, Lmm, Wmm) {
   return { k: len_k, K: len_K };
 }
 
+const MATERIAL_PRICE_MAP = [
+  [/RADNA PLOCA/i,  () => state.prices.radna],
+  [/UNIVER/i,       () => state.prices.univer],
+  [/\bMDF\b/i,      () => state.prices.mdf],
+  [/\bHDF\b/i,      () => state.prices.hdf],
+];
+
 function getPriceForMaterial(materialName) {
-  const matUpper = materialName.toUpperCase();
-  if (matUpper.includes('UNIVER')) return state.prices.univer;
-  if (matUpper.includes('MDF')) return state.prices.mdf;
-  if (matUpper.includes('HDF')) return state.prices.hdf;
-  if (matUpper.includes('RADNA PLOCA')) return state.prices.radna;
+  for (const [pattern, getter] of MATERIAL_PRICE_MAP) {
+    if (pattern.test(materialName)) return getter();
+  }
   return 0;
 }
 
@@ -329,11 +409,11 @@ function initTitlebarControls() {
     isDark = !isDark;
     if (isDark) {
       document.body.classList.remove('light');
-      themeBtn.textContent = '☁️ Dark';
+      themeBtn.textContent = '🌙 Light';
       setViewerTheme('dark');
     } else {
       document.body.classList.add('light');
-      themeBtn.textContent = '🌙 Light';
+      themeBtn.textContent = '☁️ Dark';
       setViewerTheme('light');
     }
   });
@@ -380,23 +460,186 @@ function initOverlayToggles() {
       toggleBtn.textContent = '▼';
     }
   });
+
+  const measureBtn = document.getElementById('btn-measure');
+  if (measureBtn) {
+    if (state.showMeasurements) measureBtn.classList.add('active');
+    measureBtn.addEventListener('click', () => {
+      state.showMeasurements = !state.showMeasurements;
+      measureBtn.classList.toggle('active', state.showMeasurements);
+      if (state.showMeasurements && state.selectedPlanIdx >= 0) {
+        updateModuleMeasurements(state.selectedPlanIdx);
+      } else {
+        clearMeasurements();
+      }
+    });
+  }
+}
+
+// ─── Preset Layouts Modal ────────────────────────────────────────────────────
+
+function initPresetModal() {
+  const btnPresets = document.getElementById('btn-presets');
+  const modal = document.getElementById('modal-presets');
+  const closeBtn = document.getElementById('modal-presets-close');
+  const cancelBtn = document.getElementById('modal-presets-cancel');
+  const grid = document.getElementById('presets-grid');
+  const optionsPanel = document.getElementById('preset-options');
+  const golaWrap = document.getElementById('preset-gola-wrap');
+  const widthWrap = document.getElementById('preset-width-wrap');
+  const lSideWrap = document.getElementById('preset-l-side-wrap');
+
+  if (!btnPresets || !modal || !grid) return;
+
+  // Populate preset cards
+  grid.innerHTML = '';
+  for (const preset of PRESET_LAYOUTS) {
+    const card = document.createElement('div');
+    card.className = 'preset-card';
+    card.innerHTML = `
+      ${preset.svg}
+      <div class="preset-card-title">${preset.title}</div>
+      <div class="preset-card-desc">${preset.desc.replace(/\n/g, '<br>')}</div>
+    `;
+    card.addEventListener('mouseenter', () => showPresetOptions(preset.id));
+    card.addEventListener('click', () => {
+      const isGola = document.getElementById('preset-gola').checked;
+      const width = parseFloat(document.getElementById('preset-width-main').value) || 300;
+      const side = document.getElementById('preset-l-side').value;
+
+      const dynamicPlan = buildDynamicPlan(preset.id, { isGola, width, side });
+      applyPreset({ ...preset, plan: dynamicPlan });
+      modal.classList.add('hidden');
+      hidePresetOptions();
+    });
+    grid.appendChild(card);
+  }
+
+  function showPresetOptions(presetId) {
+    optionsPanel.classList.remove('hidden');
+
+    // Always show gola system option
+    golaWrap.style.display = 'flex';
+
+    // Show width for all presets
+    widthWrap.style.display = 'block';
+
+    // Show L-side only for L-shape and U-shape
+    lSideWrap.style.display = (presetId === 'l-shape' || presetId === 'u-shape') ? 'block' : 'none';
+  }
+
+  function hidePresetOptions() {
+    optionsPanel.classList.add('hidden');
+  }
+
+  function applyPreset(preset) {
+    pushHistory();
+    // Re-generate occupiedCells from plan because they might have changed
+    const newOccupied = {};
+    preset.plan.forEach(item => {
+      if (item.mat_pos) {
+        newOccupied[`${item.mat_pos[0]},${item.mat_pos[1]}`] = { sirina: item.sirina, ime: item.ime };
+      }
+    });
+
+    state.plan = JSON.parse(JSON.stringify(preset.plan));
+    state.occupiedCells = newOccupied;
+    state.selectedPlanIdx = -1;
+    editingPlanIdx = -1;
+
+    rebuildAllModules();
+    refreshParams();
+    updateWallGridDisplay();
+    renderPlanList();
+    updateTotalCost();
+
+    showNotification(`Predložak "${preset.title}" primijenjen`, 'success');
+  }
+
+  btnPresets.addEventListener('click', () => {
+    modal.classList.remove('hidden');
+    hidePresetOptions();
+  });
+  closeBtn?.addEventListener('click', () => {
+    modal.classList.add('hidden');
+    hidePresetOptions();
+  });
+  cancelBtn?.addEventListener('click', () => {
+    modal.classList.add('hidden');
+    hidePresetOptions();
+  });
 }
 
 // ─── Category Tabs ────────────────────────────────────────────────────────────
-function initCategoryTabs() {
-  document.querySelectorAll('.tab[data-cat]').forEach(btn => {
+function initLanguageSwitcher() {
+  document.querySelectorAll('.lang-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab[data-cat]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      state.currentCategory = btn.dataset.cat;
-      populateModuleSelect();
+      const lang = btn.dataset.lang;
+      setLocale(lang);
+      document.querySelectorAll('.lang-btn').forEach(b => b.classList.toggle('active', b.dataset.lang === lang));
+      updateUILabels();
+      initCategoryTabs(); // Re-localize tabs
+      populateModuleSelect(); // Re-localize search placeholders
+      if (editingPlanIdx >= 0) refreshParamsForPlanItem(editingPlanIdx);
+      else refreshParams();
+      renderPlanList();
     });
+  });
+}
+
+function updateUILabels() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.dataset.i18n;
+    const localized = t(key);
+    if (localized) {
+      if (el.children.length === 0) {
+        el.textContent = localized;
+      } else {
+        for (let node of el.childNodes) {
+          if (node.nodeType === 3 && node.textContent.trim().length > 0) {
+            node.textContent = localized;
+          }
+        }
+      }
+    }
+  });
+
+  const searchEl = document.getElementById('module-search');
+  if (searchEl) searchEl.placeholder = t('ui.searchPlaceholder');
+}
+
+function initCategoryTabs() {
+  const tabs = document.querySelectorAll('.tab[data-cat]');
+  tabs.forEach(tab => {
+    const cat = tab.dataset.cat;
+    const label = t(`categories.${cat}`);
+    if (label) tab.textContent = label;
+    
+    tab.onclick = () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      state.currentCategory = cat;
+      const searchEl = document.getElementById('module-search');
+      if (searchEl) searchEl.value = '';
+      populateModuleSelect();
+    };
   });
 }
 
 // ─── Module Select ────────────────────────────────────────────────────────────
 function initModuleSelect() {
   populateModuleSelect();
+
+  // Search box — re-filter on input, clear on category change
+  const searchEl = document.getElementById('module-search');
+  if (searchEl) {
+    searchEl.addEventListener('input', () => populateModuleSelect());
+    // Clear search when switching categories
+    document.querySelectorAll('.tab[data-cat]').forEach(btn => {
+      btn.addEventListener('click', () => { searchEl.value = ''; });
+    });
+  }
+
   document.getElementById('klizac-select').addEventListener('change', e => {
     state.klizac = e.target.value;
   });
@@ -626,8 +869,13 @@ function populateModuleSelect() {
   const grid = document.getElementById('module-grid');
   grid.innerHTML = ''; // clear
   const mods = MODULE_GROUPS[state.currentCategory] || {};
+  const searchEl = document.getElementById('module-search');
+  const query = (searchEl?.value || '').toLowerCase().replace(/\s+/g, '_');
 
   for (const name of Object.keys(mods)) {
+    // Filter by search query
+    if (query && !name.toLowerCase().includes(query)) continue;
+
     const card = document.createElement('div');
     card.className = 'module-card';
     if (state.selectedModule === name) {
@@ -684,15 +932,16 @@ function refreshParams() {
 
     const label = document.createElement('span');
     label.className = 'param-name';
-    label.textContent = PARAM_LABELS[name] ? `${PARAM_LABELS[name]} (${name})` : name;
-    label.title = PARAM_LABELS[name] || name;
+    const localized = (typeof PARAM_LABELS[name] === 'function') ? PARAM_LABELS[name]() : (PARAM_LABELS[name] || name);
+    label.textContent = localized ? `${localized} (${name})` : name;
+    label.title = localized || name;
 
     const input = document.createElement('input');
     input.type = 'number';
     input.className = 'param-input';
     input.value = defaultVal;
     input.step = '1';
-    input.min = '0';
+    applyParamInputBounds(input, name);
 
     input.addEventListener('keydown', e => {
       const rows = container.querySelectorAll('.param-input');
@@ -740,15 +989,16 @@ function refreshParamsForPlanItem(planIdx) {
 
     const label = document.createElement('span');
     label.className = 'param-name';
-    label.textContent = PARAM_LABELS[name] ? `${PARAM_LABELS[name]} (${name})` : name;
-    label.title = PARAM_LABELS[name] || name;
+    const localized = (typeof PARAM_LABELS[name] === 'function') ? PARAM_LABELS[name]() : (PARAM_LABELS[name] || name);
+    label.textContent = localized ? `${localized} (${name})` : name;
+    label.title = localized || name;
 
     const input = document.createElement('input');
     input.type = 'number';
     input.className = 'param-input';
     input.value = item.p[name] ?? '';
     input.step = '1';
-    input.min = '0';
+    applyParamInputBounds(input, name);
 
     input.addEventListener('keydown', e => {
       const rows = container.querySelectorAll('.param-input');
@@ -756,7 +1006,13 @@ function refreshParamsForPlanItem(planIdx) {
       if (e.key === 'ArrowUp' && idx > 0) { rows[idx - 1].focus(); e.preventDefault(); }
     });
 
+    // Snapshot once on the first actual change per focus session
+    let _paramSnapshotted = false;
+    input.addEventListener('focus', () => { _paramSnapshotted = false; });
+    input.addEventListener('blur',  () => { _paramSnapshotted = false; });
+
     input.addEventListener('input', () => {
+      if (!_paramSnapshotted) { pushHistory(); _paramSnapshotted = true; }
       const val = input.value;
       item.p[name] = val;
 
@@ -782,19 +1038,10 @@ function refreshParamsForPlanItem(planIdx) {
       }
 
       // Rebuild this module's 3D
-      try {
-        const group = buildKitchenModule(
-          item.ime, item.p, state.materials, state.settings,
-          item.pos[0], item.pos[1], item.pos[2], item.r
-        );
-        removeModuleGroup(planIdx);
-        addModuleGroup(planIdx, group);
-        highlightModule(planIdx);
-      } catch (e) {
-        console.error('3D rebuild failed for', item.ime, e);
-      }
+      updateModule3D(planIdx);
+      if (state.showMeasurements) updateModuleMeasurements(planIdx);
       updateTotalCost();
-      renderPlanList();
+      autoSave();
     });
 
     row.appendChild(label);
@@ -1054,38 +1301,57 @@ const TOGGLE_LABELS = {
 };
 
 function initToggles() {
-  const grid = document.getElementById('toggles-grid');
-  grid.innerHTML = '';
+  const grids = [
+    document.getElementById('toggles-grid'),
+    document.getElementById('toggles-grid-popover')
+  ].filter(Boolean);
 
-  for (const [key, label] of Object.entries(TOGGLE_LABELS)) {
-    const item = document.createElement('div');
-    item.className = 'toggle-item' + (state.settings[key] ? ' active' : '');
-    item.dataset.key = key;
+  grids.forEach(grid => {
+    grid.innerHTML = '';
+    for (const [key, label] of Object.entries(TOGGLE_LABELS)) {
+      const item = document.createElement('div');
+      item.className = 'toggle-item' + (state.settings[key] ? ' active' : '');
+      item.dataset.key = key;
 
-    const sw = document.createElement('div');
-    sw.className = 'toggle-switch';
+      const sw = document.createElement('div');
+      sw.className = 'toggle-switch';
 
-    const lbl = document.createElement('span');
-    lbl.className = 'toggle-label';
-    lbl.textContent = label;
+      const lbl = document.createElement('span');
+      lbl.className = 'toggle-label';
+      lbl.textContent = label;
 
-    item.appendChild(sw);
-    item.appendChild(lbl);
+      item.appendChild(sw);
+      item.appendChild(lbl);
 
-    item.addEventListener('click', () => {
-      state.settings[key] = !state.settings[key];
-      item.classList.toggle('active', state.settings[key]);
-      rebuildAllModules();
-    });
+      item.addEventListener('click', () => {
+        state.settings[key] = !state.settings[key];
+        // Sync both toggle grids
+        document.querySelectorAll(`.toggle-item[data-key="${key}"]`).forEach(el => {
+          el.classList.toggle('active', state.settings[key]);
+        });
+        rebuildAllModules();
+      });
 
-    grid.appendChild(item);
-  }
+      grid.appendChild(item);
+    }
+  });
 }
 
 // ─── Position Inputs ──────────────────────────────────────────────────────────
 function initPositionInputs() {
   ['x', 'y', 'z', 'r'].forEach(axis => {
-    document.getElementById(`pos-${axis}`).addEventListener('input', e => {
+    const el = document.getElementById(`pos-${axis}`);
+
+    // Snapshot on first actual change per focus session (not on every keystroke)
+    let _posSnapshotted = false;
+    el.addEventListener('focus', () => { _posSnapshotted = false; });
+    el.addEventListener('blur',  () => { _posSnapshotted = false; });
+
+    el.addEventListener('input', e => {
+      if (state.selectedPlanIdx >= 0 && !_posSnapshotted) {
+        pushHistory();
+        _posSnapshotted = true;
+      }
       const val = parseFloat(e.target.value) || 0;
       state.position[axis] = val;
 
@@ -1260,11 +1526,59 @@ function initPlanActions() {
     });
   }
 
+
+
   document.addEventListener('keydown', e => {
-    if (e.key === 'Delete' || e.key === 'Backspace') {
-      if (document.activeElement.tagName !== 'INPUT' && state.selectedPlanIdx >= 0) {
-        deleteModule(state.selectedPlanIdx);
+    const inInput = document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA';
+
+    // Ctrl+Z — undo
+    if (e.key === 'z' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      e.preventDefault();
+      historyUndo();
+      return;
+    }
+
+    // Ctrl+Y or Ctrl+Shift+Z — redo
+    if ((e.key === 'y' && (e.ctrlKey || e.metaKey)) ||
+        (e.key === 'z' && (e.ctrlKey || e.metaKey) && e.shiftKey) ||
+        (e.key === 'Z' && (e.ctrlKey || e.metaKey))) {
+      e.preventDefault();
+      historyRedo();
+      return;
+    }
+
+    // Del / Backspace — remove selected module
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !inInput && state.selectedPlanIdx >= 0) {
+      deleteModule(state.selectedPlanIdx);
+      return;
+    }
+
+    // Ctrl+S — save project
+    if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      saveProject();
+      return;
+    }
+
+    // Ctrl+D — duplicate selected module
+    if (e.key === 'd' && (e.ctrlKey || e.metaKey) && !inInput && state.selectedPlanIdx >= 0) {
+      e.preventDefault();
+      duplicateModule(state.selectedPlanIdx);
+      return;
+    }
+
+    // Escape — deselect
+    if (e.key === 'Escape') {
+      document.getElementById('ctx-menu')?.classList.add('hidden');
+      if (state.selectedPlanIdx >= 0) {
+        state.selectedPlanIdx = -1;
+        editingPlanIdx = -1;
+        clearMeasurements();
+        highlightModule(-1);
+        refreshParams();
+        renderPlanList();
       }
+      return;
     }
   });
 
@@ -1399,6 +1713,18 @@ function autoRestore() {
     initMaterialsPanel();
     initToggles();
 
+    // Sync price inputs
+    ['univer', 'mdf', 'hdf', 'radna', 'kant-k', 'kant-K'].forEach(id => {
+      const input = document.getElementById(`price-${id}`);
+      if (input) input.value = state.prices[id.replace(/-/g, '_')];
+    });
+
+    // Sync position inputs
+    setPos('x', state.position.x);
+    setPos('y', state.position.y);
+    setPos('z', state.position.z);
+    setPos('r', state.position.r);
+
     clearAllGroups();
     clearFixtureMarkers();
     state.plan.forEach((entry, idx) => {
@@ -1418,6 +1744,8 @@ function autoRestore() {
     updateWallGridDisplay();
     updateTotalCost();
     setLightingMode(state.lightingMode);
+    const btnLight = document.getElementById('btn-toggle-light');
+    if (btnLight) btnLight.style.filter = state.lightingMode === 'warm' ? 'sepia(0.6) saturate(2)' : 'none';
     showNotification('Radni prostor vraćen', 'info');
   } catch (e) {
     console.warn('Auto-restore failed:', e);
@@ -1537,6 +1865,7 @@ async function loadProject() {
 }
 
 function addToPlan() {
+  pushHistory();
   if (!state.selectedModule) {
     showNotification('Izaberi modul!', 'warning');
     return;
@@ -1560,6 +1889,25 @@ function addToPlan() {
     mat_pos: [row, col],
     sirina
   };
+
+  // MAGNET LOGIC: If there is a previous element in the plan, magnet to it
+  if (state.plan.length > 0) {
+    const last = state.plan[state.plan.length - 1];
+    // If rotation matches, snap to end of previous
+    if (entry.r === last.r) {
+      if (entry.r === 0) {
+        entry.pos[0] = last.pos[0] + last.sirina;
+        entry.pos[1] = last.pos[1];
+        setPos('x', entry.pos[0]);
+        setPos('y', entry.pos[1]);
+      } else if (entry.r === 90 || entry.r === -90) {
+        entry.pos[0] = last.pos[0];
+        entry.pos[1] = last.pos[1] - (last.p.d || 55); 
+        setPos('x', entry.pos[0]);
+        setPos('y', entry.pos[1]);
+      }
+    }
+  }
 
   state.plan.push(entry);
   const idx = state.plan.length - 1;
@@ -1587,6 +1935,8 @@ function addToPlan() {
   }
 
   renderPlanList();
+  updateTotalCost();
+  autoSave();
   showNotification(`Dodano: ${state.selectedModule}`, 'success');
 }
 
@@ -1691,6 +2041,7 @@ function addRadnaPlocaToModule(idx) {
 
 const CORNER_ELEMENT_NAMES = new Set([
   'dug_element_90', 'dug_element_90_gola',
+  'dug_element_90_desni', 'dug_element_90_desni_gola',
   'donji_ugaoni_element_45_sa_plocom', 'donji_ugaoni_element_45_sa_plocom_gola'
 ]);
 
@@ -1699,6 +2050,7 @@ function isCornerElement(entry) {
 }
 
 function createSpanningRadnaPloca(idxA, idxB) {
+  pushHistory();
   const tA = state.plan[idxA];
   const tB = state.plan[idxB];
 
@@ -1786,6 +2138,7 @@ function createSpanningRadnaPloca(idxA, idxB) {
  *      60cm of depth is physically occupied by the side piece coming in from the side wall.
  */
 function createCornerRadnaPloca(idxA, idxB, cornerIdx) {
+  pushHistory();
   const cornerEl = state.plan[cornerIdx];
   const otherIdx = cornerIdx === idxA ? idxB : idxA;
   const otherEl = state.plan[otherIdx];
@@ -1943,6 +2296,7 @@ function addCoklaToModule(idx) {
 }
 
 function createSpanningCokla(idxA, idxB) {
+  pushHistory();
   const tA = state.plan[idxA];
   const tB = state.plan[idxB];
 
@@ -2003,6 +2357,7 @@ function createSpanningCokla(idxA, idxB) {
 
 function deleteModule(idx) {
   if (idx < 0 || idx >= state.plan.length) return;
+  pushHistory();
   const item = state.plan[idx];
 
   // Free grid cell
@@ -2051,6 +2406,7 @@ function setSnapAnchorByIndex(idx) {
 
 function mirrorModule(idx) {
   if (idx < 0 || idx >= state.plan.length) return;
+  pushHistory();
   const item = state.plan[idx];
   // True mirror of an L-shape: toggle between r and r±90°.
   // Origin = inner corner of the L, so position stays fixed.
@@ -2064,6 +2420,7 @@ function mirrorModule(idx) {
 
 function duplicateModule(idx) {
   if (idx < 0 || idx >= state.plan.length) return;
+  pushHistory();
   const src = state.plan[idx];
   // Deep-copy the entry, offset position slightly so it's visible
   const copy = {
@@ -2090,11 +2447,14 @@ function duplicateModule(idx) {
 function clearPlan() {
   if (state.plan.length === 0) return;
   if (!confirm('Obrisati sve module iz plana?')) return;
+  pushHistory();
   state.plan = [];
   state.occupiedCells = {};
   state.selectedPlanIdx = -1;
   editingPlanIdx = -1;
   clearAllGroups();
+  clearFixtureMarkers();
+  state.wallFixtures = [];
   setPos('x', 0); setPos('y', 0); setPos('z', 0); setPos('r', 0);
   selectCell(2, 1);
   refreshParams();
@@ -2130,6 +2490,14 @@ function updateModule3D(idx) {
   addModuleGroup(idx, group);
 }
 
+function updateModuleMeasurements(idx) {
+  if (idx < 0) { clearMeasurements(); return; }
+  const item = state.plan[idx];
+  if (!item) return;
+  const size = getModuleSize(item);
+  showMeasurements(idx, size);
+}
+
 function getModuleSize(item) {
   const p = item.p;
   let s = parseFloat(p.s || p.dss || p.sl || p.l || 60);
@@ -2145,6 +2513,7 @@ function getModuleSize(item) {
 }
 
 function snapModuleToSide(srcIdx, anchorIdx, anchorInfo, sourceInfo) {
+  pushHistory();
   try {
     const anchor = state.plan[anchorIdx];
     const source = state.plan[srcIdx];
@@ -2257,6 +2626,8 @@ function selectModuleByIndex(idx) {
   // Populate params panel with this item's current values for live editing
   refreshParamsForPlanItem(idx);
 
+  if (state.showMeasurements) updateModuleMeasurements(idx);
+
   renderPlanList();
 }
 
@@ -2265,6 +2636,7 @@ const PLAN_ICONS = {
   fiokar_gola: '🗄', vrata_sudo_masine: '🚿', radni_stol_rerne: '🔥',
   radni_stol_rerne_gola: '🔥', sporet: '🍳', samostojeci_frizider: '❄',
   dug_element_90: '↩', dug_element_90_gola: '↩',
+  dug_element_90_desni: '↪', dug_element_90_desni_gola: '↪',
   donji_ugaoni_element_45_sa_plocom: '◣', donji_ugaoni_element_45_sa_plocom_gola: '◣',
   klasicna_viseca: '🗄', klasicna_viseca_gola: '🗄', gue90: '↩',
   viseca_na_kipu: '⬆', viseca_na_kipu_gola: '⬆',
@@ -2499,7 +2871,7 @@ function generateMPRContent(L_mm, B_mm, settings = {}) {
     'SR="0"',
     'FM="1"',
     'ML="2000"',
-    'UF="20"',
+    'UF="STANDARD"',
     'ZS="20"',
     'DN="STANDARD"',
     'DST="0"',

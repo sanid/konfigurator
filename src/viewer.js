@@ -6,8 +6,9 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 
-let scene, camera, renderer, controls, animId;
+let scene, camera, renderer, labelRenderer, controls, animId;
 let ambientLight, keyLight, fillLight;
 let gridHelper, floorMesh, wallMesh;
 
@@ -47,6 +48,14 @@ export function initViewer(canvas) {
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.2;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  // ─ Label Renderer ──────────────────────────────────────────────────────────
+  labelRenderer = new CSS2DRenderer();
+  labelRenderer.setSize(w, h);
+  labelRenderer.domElement.style.position = 'absolute';
+  labelRenderer.domElement.style.top = '0px';
+  labelRenderer.domElement.style.pointerEvents = 'none';
+  canvas.parentElement.appendChild(labelRenderer.domElement);
 
   // ─ Lights ───────────────────────────────────────────────────────────────────
   ambientLight = new THREE.AmbientLight(0x8090c0, 0.6);
@@ -128,6 +137,7 @@ export function initViewer(canvas) {
     animId = requestAnimationFrame(animate);
     controls.update();
     renderer.render(scene, camera);
+    if (labelRenderer) labelRenderer.render(scene, camera);
   }
   animate();
 
@@ -181,6 +191,7 @@ export function resizeViewer() {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   renderer.setSize(w, h, false);
+  if (labelRenderer) labelRenderer.setSize(w, h);
 }
 
 /** Add a module group to the scene at a given plan index. */
@@ -197,6 +208,21 @@ export function removeModuleGroup(index) {
     scene.remove(g);
     disposeGroup(g);
     moduleGroups.delete(index);
+  }
+}
+
+/** 
+ * shiftModuleGroups — shift indices after a deletion
+ * @param {number} deletedIdx
+ */
+export function shiftModuleGroups(deletedIdx) {
+  const indices = Array.from(moduleGroups.keys()).sort((a,b) => a-b);
+  for (const idx of indices) {
+    if (idx > deletedIdx) {
+      const g = moduleGroups.get(idx);
+      moduleGroups.delete(idx);
+      moduleGroups.set(idx - 1, g);
+    }
   }
 }
 
@@ -496,4 +522,51 @@ export function getModuleSnapInfoAt(x, y) {
 export function getModuleIndexAt(x, y) {
   const info = getModuleSnapInfoAt(x, y);
   return info ? info.index : null;
+}
+
+// ─── Measurements ─────────────────────────────────────────────────────────────
+let activeLabels = [];
+
+/**
+ * showMeasurements — display dimension labels for a specific module
+ */
+export function showMeasurements(index, { s, v, d }) {
+  clearMeasurements();
+  const group = moduleGroups.get(index);
+  if (!group) return;
+
+  // Update world matrices for accurate bounding box
+  group.updateWorldMatrix(true, true);
+  const box = new THREE.Box3().setFromObject(group);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+
+  const mkLabel = (text, pos) => {
+    const div = document.createElement('div');
+    div.className = 'measure-label';
+    div.textContent = text;
+    const label = new CSS2DObject(div);
+    label.position.copy(pos);
+    scene.add(label);
+    activeLabels.push(label);
+  };
+
+  // Width label (centered above)
+  mkLabel(`${Math.round(s)}cm`, new THREE.Vector3(center.x, box.max.y + 8, center.z));
+
+  // Depth label (to the front)
+  mkLabel(`${Math.round(d)}cm`, new THREE.Vector3(box.max.x + 8, center.y, center.z));
+
+  // Height label (to the side)
+  mkLabel(`${Math.round(v)}cm`, new THREE.Vector3(box.min.x - 12, center.y, center.z));
+}
+
+/**
+ * clearMeasurements — remove all dimension labels from the scene
+ */
+export function clearMeasurements() {
+  activeLabels.forEach(l => scene.remove(l));
+  activeLabels = [];
 }

@@ -151,6 +151,22 @@ export const MODULE_GROUPS = {
       ['c', '10'],
       ['brp', '1']
     ],
+    'dug_element_90_desni': [
+      ['dss', '80'],
+      ['lss', '90'],
+      ['v', '82'],
+      ['d', '55'],
+      ['c', '10'],
+      ['brp', '1']
+    ],
+    'dug_element_90_desni_gola': [
+      ['dss', '100'],
+      ['lss', '80'],
+      ['v', '88'],
+      ['d', '55'],
+      ['c', '10'],
+      ['brp', '1']
+    ],
     'donji_ugaoni_element_45_sa_plocom': [
       ['dss', '90'],
       ['lss', '90'],

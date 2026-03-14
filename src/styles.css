@@ -357,6 +357,46 @@ body {
   box-shadow: 0 2px 8px var(--accent-glow);
 }
 
+/* ── Module Search ─────────────────────────────────────── */
+.module-search-wrapper {
+  position: relative;
+  margin-top: 6px;
+}
+
+.module-search-wrapper::before {
+  content: '⌕';
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-secondary);
+  font-size: 14px;
+  pointer-events: none;
+  line-height: 1;
+}
+
+.module-search {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 7px 10px 7px 28px;
+  font-size: 11px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.module-search::placeholder {
+  color: var(--text-dim);
+}
+
+.module-search:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
 /* ── Form Controls ─────────────────────────────────────── */
 .field-group {
   display: flex;
@@ -1555,5 +1595,62 @@ body.light .krojna-by-module-item {
   to {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* ── Preset layout cards ─────────────────────────────────── */
+.preset-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 12px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+.preset-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+  transform: translateY(-2px);
+}
+.preset-card svg {
+  width: 80px;
+  height: 80px;
+  flex-shrink: 0;
+}
+.preset-card-title {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: var(--text-primary);
+  text-transform: uppercase;
+}
+.preset-card-desc {
+  font-size: 10px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* ── Preset options panel ─────────────────────────── */
+.preset-options {
+  animation: slideDown 0.2s ease-out;
+}
+
+.preset-options.hidden {
+  display: none;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
