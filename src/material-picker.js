@@ -108,6 +108,7 @@ export function initMaterialPickerModal() {
     if (pendingMatSel && state.matPickerTarget) {
       state.materials[state.matPickerTarget] = { ...pendingMatSel };
       refreshMaterialSwatches();
+      import('./kitchen-builder.js').then(m => m.clearMaterialCache());
       import('./plan-manager.js').then(m => m.rebuildAllModules());
     }
     document.getElementById('modal-material').classList.add('hidden');

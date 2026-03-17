@@ -211,7 +211,23 @@ export function removeModuleGroup(index) {
   }
 }
 
-/** 
+/**
+ * moveModuleGroup — update position/rotation of an existing group without rebuilding geometry.
+ * Use this instead of buildKitchenModule when only pos/rot changed.
+ * @param {number} index - plan index
+ * @param {number} posX, posY, posZ - world position in cm
+ * @param {number} rotDeg - Y-axis rotation in degrees
+ * @returns {boolean} true if the group existed and was moved
+ */
+export function moveModuleGroup(index, posX, posY, posZ, rotDeg) {
+  const g = moduleGroups.get(index);
+  if (!g) return false;
+  g.position.set(posX, posZ, -posY + 0.1);
+  g.rotation.y = -rotDeg * (Math.PI / 180);
+  return true;
+}
+
+/**
  * shiftModuleGroups — shift indices after a deletion
  * @param {number} deletedIdx
  */
