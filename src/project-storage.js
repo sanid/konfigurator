@@ -25,7 +25,8 @@ export function autoSave() {
       selectedCell: state.selectedCell,
       clientName: document.getElementById('client-name')?.value || state.clientName,
       simplifiedKrojna: state.simplifiedKrojna,
-      lightingMode: state.lightingMode
+      lightingMode: state.lightingMode,
+      moduleDefs: state.moduleDefs
     };
     localStorage.setItem(AUTO_SAVE_KEY, JSON.stringify(data));
   } catch (e) {
@@ -50,6 +51,7 @@ export function autoRestore() {
     state.selectedCell = data.selectedCell || [2, 1];
     state.simplifiedKrojna = data.simplifiedKrojna || false;
     state.lightingMode = data.lightingMode || 'warm';
+    state.moduleDefs = data.moduleDefs || {};
 
     if (data.clientName) {
       state.clientName = data.clientName;
@@ -106,7 +108,8 @@ export async function saveProject() {
     position: state.position,
     selectedCell: state.selectedCell,
     simplifiedKrojna: state.simplifiedKrojna,
-    lightingMode: state.lightingMode
+    lightingMode: state.lightingMode,
+    moduleDefs: state.moduleDefs
   };
   const filename = (projectData.clientName || 'projekat').replace(/\s+/g, '_') + '.meco';
   try {
@@ -135,6 +138,7 @@ export async function loadProject() {
     state.selectedPlanIdx = -1;
     state.simplifiedKrojna = data.simplifiedKrojna || false;
     state.lightingMode = data.lightingMode || 'warm';
+    state.moduleDefs = data.moduleDefs || {};
 
     if (data.clientName) {
       state.clientName = data.clientName;

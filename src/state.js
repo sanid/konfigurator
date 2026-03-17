@@ -24,7 +24,9 @@ export let state = {
   lightingMode: 'warm',
   showMeasurements: true,
   // Active layout config — set when a preset is applied
-  activeLayout: { type: 'galley', side: 'left', width: 300, leftCount: 2, rightCount: 2, isGola: false }
+  activeLayout: { type: 'galley', side: 'left', width: 300, leftCount: 2, rightCount: 2, isGola: false },
+  // Per-module custom labels and BOM definitions
+  moduleDefs: {}
 };
 
 export let editingPlanIdx = -1;

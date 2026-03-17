@@ -18,6 +18,7 @@ import { setSnapAnchorByIndex, snapModuleToSide } from './snap.js';
 import { addSpecialElement, addRadnaPlocaToModule, addCoklaToModule, isCornerElement, CORNER_ELEMENT_NAMES } from './special-elements.js';
 import { addToPlan, deleteModule, mirrorModule, duplicateModule, clearPlan, rebuildAllModules, updateModule3D, updateModuleMeasurements, selectModuleByIndex, renderPlanList, PLAN_ICONS } from './plan-manager.js';
 import { initKrojnaModal, showKrojnaLista, exportOptimik, exportPdf, exportModuleMPR, exportAllMPR } from './exports.js';
+import { initModuleManager, openModuleManager } from './module-manager.js';
 
 // ─── Wall Fixture Types ───────────────────────────────────────────────────────
 const FIXTURE_TYPES = [
@@ -376,6 +377,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initMaterialPickerModal();
   initInputModal();
   initKrojnaModal();
+  initModuleManager();
   initFixtureModal();
   initPresetModal();
   initOverlayToggles();
@@ -1157,6 +1159,7 @@ function initPlanActions() {
     addToPlan(state.selectedModule, state.paramInputs, state.klizac, getPos, setPos);
   });
   document.getElementById('btn-krojna').addEventListener('click', showKrojnaLista);
+  document.getElementById('btn-module-manager').addEventListener('click', openModuleManager);
   document.getElementById('btn-optimik').addEventListener('click', exportOptimik);
   document.getElementById('btn-pdf').addEventListener('click', exportPdf);
 

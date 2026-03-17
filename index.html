@@ -336,6 +336,7 @@
             <button class="btn btn-warning flex-1" id="btn-krojna" aria-label="Otvori krojna listu">📋 <span data-i18n="ui.cuttingList">KROJNA</span></button>
             <button class="btn btn-info flex-1" id="btn-optimik" aria-label="Eksportuj za Optimik">📊 <span data-i18n="ui.optimik">OPTIMIK</span></button>
          </div>
+         <button class="btn flex-1" id="btn-module-manager" aria-label="Upravljač modulima" style="margin-top:6px; width:100%;">🔧 MODULI &amp; BOM</button>
          <button class="btn btn-purple" id="btn-pdf" aria-label="Izvezi PDF ponudu" style="margin-top:6px;">📄 <span data-i18n="ui.exportPdfOffer">IZVEZI PDF PONUDU</span></button>
 
       </aside>
@@ -468,6 +469,26 @@
       <div class="ctx-item" id="ctx-anchor">⚓ Set as Anchor</div>
       <div class="ctx-sep"></div>
       <div class="ctx-item danger" id="ctx-remove">🗑 Remove</div>
+   </div>
+
+   <!-- Module Manager Modal -->
+   <div id="modal-module-manager" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-box modal-mm-box">
+         <div class="modal-header">
+            <span>🔧 UPRAVLJAČ MODULIMA</span>
+            <button class="modal-close" id="modal-module-manager-close" aria-label="Zatvori upravljač modulima">✕</button>
+         </div>
+         <div class="modal-body mm-body">
+            <div class="mm-sidebar">
+               <div class="mm-sidebar-title">Moduli</div>
+               <div id="mm-module-list" class="mm-module-list"></div>
+            </div>
+            <div id="mm-editor" class="mm-editor">
+               <div class="mm-empty">Odaberi modul s lijeve strane</div>
+            </div>
+         </div>
+      </div>
    </div>
 
    <!-- Preset Layouts Modal -->

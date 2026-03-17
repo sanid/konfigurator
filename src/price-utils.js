@@ -1,5 +1,6 @@
 import { state } from './state.js';
 import { computeCuttingList } from './cutting-list.js';
+import { getBomCostForItem } from './module-manager.js';
 
 export function initPriceInputs() {
   ['univer', 'mdf', 'hdf', 'radna', 'kant-k', 'kant-K'].forEach(id => {
@@ -83,7 +84,13 @@ export function updateTotalCost() {
     totalKant += (k.K * state.prices.kant_K * part.qty);
   }
 
-  const totalEur = totalMaterial + totalKant;
+  // BOM cost from module manager
+  let totalBom = 0;
+  for (const item of state.plan) {
+    totalBom += getBomCostForItem(item);
+  }
+
+  const totalEur = totalMaterial + totalKant + totalBom;
   const totalRsd = totalEur * 117;
 
   const totalEl = document.getElementById('price-total');
@@ -107,6 +114,6 @@ export function updateTotalCost() {
       breakdown.style.color = 'var(--text-secondary)';
       overlay.appendChild(breakdown);
     }
-    breakdown.innerHTML = `Mat: ${totalMaterial.toFixed(2)}€ · Kant: <span style="color:var(--accent)">${totalKant.toFixed(2)}€</span>`;
+    breakdown.innerHTML = `Mat: ${totalMaterial.toFixed(2)}€ · Kant: <span style="color:var(--accent)">${totalKant.toFixed(2)}€</span>${totalBom > 0 ? ` · BOM: <span style="color:var(--green)">${totalBom.toFixed(2)}€</span>` : ''}`;
   }
 }
