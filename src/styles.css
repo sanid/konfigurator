@@ -1200,6 +1200,15 @@ body.light .pin-label:hover {
   flex-shrink: 0;
 }
 
+.plan-item-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  border: 1px solid rgba(0,0,0,0.2);
+  align-self: center;
+}
+
 .plan-item-info {
   flex: 1;
   min-width: 0;

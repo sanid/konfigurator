@@ -617,11 +617,17 @@ function populateModuleSelect() {
     if (query && !name.toLowerCase().includes(query)) continue;
     const card = document.createElement('div');
     card.className = 'module-card';
-    if (state.selectedModule === name) card.classList.add('selected');
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('aria-label', name.replace(/_/g, ' '));
+    if (state.selectedModule === name) { card.classList.add('selected'); card.setAttribute('aria-pressed', 'true'); }
+    else card.setAttribute('aria-pressed', 'false');
     card.innerHTML = `${getModuleIconSVG(name)}<div class="module-card-label">${name.replace(/_/g, ' ')}</div>`;
+    card.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); card.click(); } });
     card.addEventListener('click', () => {
-      grid.querySelectorAll('.module-card').forEach(c => c.classList.remove('selected'));
+      grid.querySelectorAll('.module-card').forEach(c => { c.classList.remove('selected'); c.setAttribute('aria-pressed', 'false'); });
       card.classList.add('selected');
+      card.setAttribute('aria-pressed', 'true');
       state.selectedModule = name;
       setEditingPlanIdx(-1);
       refreshParams();
@@ -659,6 +665,7 @@ export function refreshParams() {
     label.title = localized || name;
     const input = document.createElement('input');
     input.type = 'number'; input.className = 'param-input'; input.value = defaultVal; input.step = '1';
+    input.setAttribute('aria-label', localized ? `${localized} (${name})` : name);
     applyParamInputBounds(input, name);
     input.addEventListener('keydown', e => {
       const rows = container.querySelectorAll('.param-input');
@@ -698,6 +705,7 @@ export function refreshParamsForPlanItem(planIdx) {
     label.title = localized || name;
     const input = document.createElement('input');
     input.type = 'number'; input.className = 'param-input'; input.value = item.p[name] ?? ''; input.step = '1';
+    input.setAttribute('aria-label', localized ? `${localized} (${name})` : name);
     applyParamInputBounds(input, name);
     input.addEventListener('keydown', e => {
       const rows = container.querySelectorAll('.param-input');
@@ -745,15 +753,23 @@ export function initToggles() {
       const item = document.createElement('div');
       item.className = 'toggle-item' + (state.settings[key] ? ' active' : '');
       item.dataset.key = key;
+      item.setAttribute('role', 'switch');
+      item.setAttribute('tabindex', '0');
+      item.setAttribute('aria-checked', state.settings[key] ? 'true' : 'false');
+      item.setAttribute('aria-label', label);
       const sw = document.createElement('div');
       sw.className = 'toggle-switch';
       const lbl = document.createElement('span');
       lbl.className = 'toggle-label';
       lbl.textContent = label;
       item.appendChild(sw); item.appendChild(lbl);
+      item.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); item.click(); } });
       item.addEventListener('click', () => {
         state.settings[key] = !state.settings[key];
-        document.querySelectorAll(`.toggle-item[data-key="${key}"]`).forEach(el => el.classList.toggle('active', state.settings[key]));
+        document.querySelectorAll(`.toggle-item[data-key="${key}"]`).forEach(el => {
+          el.classList.toggle('active', state.settings[key]);
+          el.setAttribute('aria-checked', state.settings[key] ? 'true' : 'false');
+        });
         clearGeomCache();
         rebuildAllModules();
       });

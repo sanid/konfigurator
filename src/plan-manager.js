@@ -5,6 +5,7 @@ import { showNotification } from './notifications.js';
 import { updateWallGridDisplay, selectCell, WALL_COLS, rebuildCountertopsForRow } from './wall-grid.js';
 import { updateTotalCost } from './price-utils.js';
 import { autoSave } from './project-storage.js';
+import { TEXTURE_PRESETS } from './modules-config.js';
 
 export const PLAN_ICONS = {
   radni_stol: '🚪', fiokar: '🗄', gola_radni_stol: '📦',
@@ -203,10 +204,29 @@ export function renderPlanList() {
   state.plan.forEach((item, idx) => {
     const el = document.createElement('div');
     el.className = 'plan-item' + (idx === state.selectedPlanIdx ? ' selected' : '');
+    el.setAttribute('role', 'listitem');
+    el.setAttribute('aria-label', `[${idx + 1}] ${item.ime.replace(/_/g, ' ')}`);
 
     const icon = document.createElement('span');
     icon.className = 'plan-item-icon';
     icon.textContent = PLAN_ICONS[item.ime] || '📦';
+    icon.setAttribute('aria-hidden', 'true');
+
+    // Material color swatch — shows front material (or korpus for gola modules)
+    const isGola = item.ime.includes('_gola') || item.ime === 'gola_radni_stol';
+    const matKey = isGola ? 'korpus' : 'front';
+    const matDef = state.materials[matKey] || state.materials.front;
+    const swatch = document.createElement('span');
+    swatch.className = 'plan-item-swatch';
+    if (matDef.type === 'texture' && matDef.textureName) {
+      const tp = TEXTURE_PRESETS.find(t => t.name === matDef.textureName);
+      if (tp) swatch.style.background = `linear-gradient(135deg, ${tp.base} 0%, ${tp.grain} 100%)`;
+      else swatch.style.backgroundColor = matDef.color || '#888';
+    } else {
+      swatch.style.backgroundColor = matDef.color || '#888';
+    }
+    swatch.title = matDef.name || matKey;
+    swatch.setAttribute('aria-label', `Materijal: ${matDef.name || matKey}`);
 
     const info = document.createElement('div');
     info.className = 'plan-item-info';
@@ -223,12 +243,14 @@ export function renderPlanList() {
     info.appendChild(name);
     info.appendChild(meta);
     el.appendChild(icon);
+    el.appendChild(swatch);
     el.appendChild(info);
 
     const deleteBtn = document.createElement('button');
     deleteBtn.className = 'plan-item-delete';
     deleteBtn.innerHTML = '🗑';
     deleteBtn.title = 'Obrisi';
+    deleteBtn.setAttribute('aria-label', `Obriši ${item.ime.replace(/_/g, ' ')}`);
     deleteBtn.addEventListener('click', (e) => { e.stopPropagation(); deleteModule(idx); });
     el.appendChild(deleteBtn);
 
