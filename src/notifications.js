@@ -1,6 +1,6 @@
 // notifications.js
 export function showNotification(msg, type) {
-  if (\!type) type = 'info';
+  if (!type) type = 'info';
   const existing = document.querySelector('.toast');
   if (existing) existing.remove();
   const toast = document.createElement('div');
