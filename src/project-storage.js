@@ -1,6 +1,6 @@
 import { state } from './state.js';
 import { DEFAULT_MATERIALS, DEFAULT_SETTINGS } from './modules-config.js';
-import { buildKitchenModule } from './kitchen-builder.js';
+import { buildKitchenModuleAsync, clearMaterialCache, clearGeomCache } from './kitchen-builder.js';
 import { clearAllGroups, addModuleGroup, addFixtureMarker, clearFixtureMarkers, setLightingMode } from './viewer.js';
 import { showNotification } from './notifications.js';
 import { updateWallGridDisplay } from './wall-grid.js';
@@ -67,14 +67,15 @@ export function autoRestore() {
 
     _syncPosInputs();
 
+    clearMaterialCache();
+    clearGeomCache();
     clearAllGroups();
     clearFixtureMarkers();
-    state.plan.forEach((entry, idx) => {
-      try {
-        const group = buildKitchenModule(entry.ime, entry.p, state.materials, state.settings, entry.pos[0], entry.pos[1], entry.pos[2], entry.r || 0);
-        addModuleGroup(idx, group);
-      } catch (e) { console.warn('Auto-restore: failed to rebuild module', idx, e); }
-    });
+    Promise.all(state.plan.map((entry, idx) =>
+      buildKitchenModuleAsync(entry.ime, entry.p, state.materials, state.settings, entry.pos[0], entry.pos[1], entry.pos[2], entry.r || 0)
+        .then(group => addModuleGroup(idx, group))
+        .catch(e => console.warn('Auto-restore: failed to rebuild module', idx, e))
+    ));
     state.wallFixtures.forEach((fixture, idx) => {
       try { addFixtureMarker(idx, fixture); } catch (e) { }
     });
@@ -149,14 +150,15 @@ export async function loadProject() {
       if (input) input.value = state.prices[id.replace(/-/g, '_')];
     });
 
+    clearMaterialCache();
+    clearGeomCache();
     clearAllGroups();
     clearFixtureMarkers();
-    state.plan.forEach((entry, idx) => {
-      try {
-        const group = buildKitchenModule(entry.ime, entry.p, state.materials, state.settings, entry.pos[0], entry.pos[1], entry.pos[2], entry.r || 0);
-        addModuleGroup(idx, group);
-      } catch (e) { console.warn('Failed to rebuild module', idx, e); }
-    });
+    Promise.all(state.plan.map((entry, idx) =>
+      buildKitchenModuleAsync(entry.ime, entry.p, state.materials, state.settings, entry.pos[0], entry.pos[1], entry.pos[2], entry.r || 0)
+        .then(group => addModuleGroup(idx, group))
+        .catch(e => console.warn('Failed to rebuild module', idx, e))
+    ));
     state.wallFixtures.forEach((fixture, idx) => {
       try { addFixtureMarker(idx, fixture); } catch (e) { }
     });

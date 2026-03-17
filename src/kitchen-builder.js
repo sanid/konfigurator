@@ -23,15 +23,138 @@ const { translate, rotateX, rotateY, rotateZ } = transforms;
 const { union } = booleans;
 const { extrudeLinear } = extrusions;
 
+// ─── JSCAD Web Worker ─────────────────────────────────────────────────────────
+// Offloads cylinder/polygon JSCAD union() + triangulation to a background thread.
+// The worker is used for async pre-population of _geomCache.threeGeos entries.
+//
+// Architecture:
+//   1. First call for a unique shape → synchronous build (boxes fast, JSCAD slow)
+//   2. Cache entry is stored immediately after sync build
+//   3. Worker also receives the same JSCAD specs and computes in background
+//   4. On worker completion, cache entry's threeGeos are replaced with worker-built
+//      BufferGeometries (identical result but frees main thread for future builds)
+//   5. Subsequent calls for same shape → instant cache hit, no JSCAD at all
+//
+// Note: since the geometry cache already means each unique shape is computed only
+// once, the main benefit of the worker is for scenes that have many *different*
+// module shapes — the worker overlaps computation of the next shape while the
+// main thread is idle.
+
+let _worker = null;
+let _workerReady = false;
+let _pendingWorkerCbs = new Map(); // id → callback
+let _workerIdCounter = 0;
+
+function _getWorker() {
+  if (_worker) return _worker;
+  try {
+    _worker = new Worker(new URL('./jscad.worker.js', import.meta.url), { type: 'classic' });
+    _worker.onmessage = (e) => {
+      const { id, results, error } = e.data;
+      const cb = _pendingWorkerCbs.get(id);
+      if (cb) { _pendingWorkerCbs.delete(id); cb(results, error); }
+    };
+    _worker.onerror = (e) => {
+      console.warn('JSCAD worker error:', e);
+      // On worker failure, fall back to sync path permanently
+      _worker = null;
+    };
+    _workerReady = true;
+  } catch (e) {
+    console.warn('JSCAD worker unavailable, using sync path:', e.message);
+    _worker = null;
+  }
+  return _worker;
+}
+
+/**
+ * Dispatch groups of JSCAD specs to the worker for async computation.
+ * groups: Array<{ matKey, specs: GeomSpec[] }>
+ * Returns a Promise that resolves with Array<{ matKey, bufferGeo }>
+ */
+function _dispatchToWorker(groups) {
+  const worker = _getWorker();
+  if (!worker) return null; // worker unavailable
+  return new Promise((resolve) => {
+    const id = ++_workerIdCounter;
+    _pendingWorkerCbs.set(id, (results, error) => {
+      if (error || !results) { resolve(null); return; }
+      const geos = results.map(r => {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(r.positions, 3));
+        geo.setAttribute('normal', new THREE.BufferAttribute(r.normals, 3));
+        return { matKey: r.matKey, bufferGeo: geo };
+      });
+      resolve(geos);
+    });
+    worker.postMessage({ id, groups });
+  });
+}
+
+// ─── Global material cache ────────────────────────────────────────────────────
+// Keyed by the serialized material definition so identical materials are reused
+// across all buildKitchenModule calls instead of being recreated each time.
+const _matCache = new Map();
+
+function _getCachedMat(matDef) {
+  if (!matDef) return null;
+  const key = typeof matDef === 'string' ? matDef : JSON.stringify(matDef);
+  if (_matCache.has(key)) return _matCache.get(key);
+  const mat = createMaterial(matDef);
+  _matCache.set(key, mat);
+  return mat;
+}
+
+/** Call this when materials change globally (e.g. user picks a new material).
+ *  Does NOT dispose — existing scene meshes may still reference these materials.
+ *  Three.js will GC them once no mesh holds a reference.
+ *  Geometry cache is NOT cleared here — shapes don't change when materials change. */
+export function clearMaterialCache() {
+  _matCache.clear();
+}
+
+/** Call this when settings change (front_vrata, polica, etc.) or the app resets,
+ *  as settings affect which geometry is generated. */
+export function clearGeomCache() {
+  _geomCache.clear();
+}
+
+// ─── Geometry instance cache ──────────────────────────────────────────────────
+// Caches the raw builder output (boxes[] + JSCAD geom lists) keyed by
+// "moduleName|serializedParams|serializedSettings".
+// Boxes are plain JS objects — cheap to clone per instance.
+// JSCAD geom objects are immutable after creation — safe to share across instances.
+// Three.js BufferGeometry objects from the slow path are also cached and cloned.
+//
+// Cache is cleared when:
+//   - Settings change (clearGeomCache called from initToggles)
+//   - Project is loaded/restored (clearGeomCache called)
+//   - Any module param changes → new cache key, automatic miss
+const _geomCache = new Map();
+const _GEOM_CACHE_MAX = 200; // evict oldest when over limit
+
+function _geomCacheKey(name, p, settings) {
+  return name + '|' + JSON.stringify(p) + '|' + JSON.stringify(settings);
+}
+
+/** Evict oldest entry when cache is full. */
+function _geomCacheSet(key, val) {
+  if (_geomCache.size >= _GEOM_CACHE_MAX) {
+    _geomCache.delete(_geomCache.keys().next().value);
+  }
+  _geomCache.set(key, val);
+}
+
+// ─── addBox — stores box data for direct THREE.BoxGeometry creation ───────────
+// Each entry: { cx, cy, cz, sx, sy, sz, matKey }
+// No JSCAD cuboid is created here — boxes bypass union() entirely.
 function addBox(group, sx, sy, sz, tx, ty, tz, matKey) {
   if (sx <= 0 || Math.abs(sy) <= 0 || sz <= 0) return;
   const cx = tx + sx / 2;
   const cy = tz + sz / 2;
   const cz = -(ty + sy / 2);
-  let c = cuboid({ size: [sx, sz, Math.abs(sy)] });
-  c = translate([cx, cy, cz], c);
-  if (!group.materials[matKey]) group.materials[matKey] = [];
-  group.materials[matKey].push(c);
+  if (!group.boxes) group.boxes = [];
+  group.boxes.push({ cx, cy, cz, sx, sy: Math.abs(sy), sz, matKey });
 }
 
 // ─── Corpus box (shared logic for base cabinets) ──────────────────────────────
@@ -68,6 +191,14 @@ function buildShelves(group, s, v, d, c, brp, mKorpus, settings) {
 
 
 
+// ─── Geom spec recording ──────────────────────────────────────────────────────
+// Each slow-path helper records serializable specs alongside JSCAD geoms so the
+// worker can reproduce the same geometry without receiving JSCAD objects.
+function _addSpec(group, matKey, spec) {
+  if (!group.geomSpecs) group.geomSpecs = [];
+  group.geomSpecs.push({ matKey, spec });
+}
+
 // ─── cevasta_rucka_horizontala ─────────────────────────────────────────────────
 // Horizontal handle: two posts protrude outward (+Z from door), bar runs along X
 // Arguments mapped to Three.js space: tx=X(width), ty=Z(depth toward viewer), tz=Y(height)
@@ -89,6 +220,10 @@ function addCevastaRuckaHorizontala(group, tx, ty, tz, duzina = 18.6, visina = 2
   );
   if (!group.materials['handle']) group.materials['handle'] = [];
   group.materials['handle'].push(p1, p2, b);
+  // Worker specs
+  _addSpec(group, 'handle', { type: 'cylinder', radius: r, height: visina, segments: 16, translate: [tx - duzina / 2 + visina - debljina / 2, tz, ty + visina / 2] });
+  _addSpec(group, 'handle', { type: 'cylinder', radius: r, height: visina, segments: 16, translate: [tx + duzina / 2 - visina - debljina / 2, tz, ty + visina / 2] });
+  _addSpec(group, 'handle', { type: 'cylinder', radius: r, height: duzina, segments: 16, rotateY: Math.PI / 2, translate: [tx, tz, ty + visina + 1] });
 }
 
 // ─── cevasta_rucka (vertical) ─────────────────────────────────────────────────
@@ -112,6 +247,10 @@ function addCevastaRucka(group, tx, ty, tz, duzina = 18.6, visina = 2.5, debljin
   );
   if (!group.materials['handle']) group.materials['handle'] = [];
   group.materials['handle'].push(p1, p2, b);
+  // Worker specs
+  _addSpec(group, 'handle', { type: 'cylinder', radius: r, height: visina, segments: 16, translate: [tx, tz - duzina / 2 + visina - debljina / 2, ty + visina / 2] });
+  _addSpec(group, 'handle', { type: 'cylinder', radius: r, height: visina, segments: 16, translate: [tx, tz + duzina / 2 - visina - debljina / 2, ty + visina / 2] });
+  _addSpec(group, 'handle', { type: 'cylinder', radius: r, height: duzina, segments: 16, rotateX: Math.PI / 2, translate: [tx, tz, ty + visina + 1] });
 }
 
 function addLegs(group, s, c, depth, customPositions = null) {
@@ -123,11 +262,13 @@ function addLegs(group, s, c, depth, customPositions = null) {
     [s - 3, 5.5]
   ];
   for (const [px, py] of positions) {
-    let c = cylinder({ radius: r, height: h });
-    c = rotateX(-Math.PI / 2, c); // map Z axis cylinder to Y axis
-    c = translate([px, h / 2, py], c);
+    let cyl = cylinder({ radius: r, height: h });
+    cyl = rotateX(-Math.PI / 2, cyl); // map Z axis cylinder to Y axis
+    cyl = translate([px, h / 2, py], cyl);
     if (!group.materials['leg']) group.materials['leg'] = [];
-    group.materials['leg'].push(c);
+    group.materials['leg'].push(cyl);
+    // Worker spec
+    _addSpec(group, 'leg', { type: 'cylinder', radius: r, height: h, segments: 16, rotateX: -Math.PI / 2, translate: [px, h / 2, py] });
   }
 }
 
@@ -681,6 +822,14 @@ function build_donji_ugaoni_element_45(p, mats, settings) {
 
   if (!g.materials[mK]) g.materials[mK] = [];
   g.materials[mK].push(botExt);
+  // Worker spec for the bottom polygon
+  _addSpec(g, mK, {
+    type: 'polygon',
+    points: [[0, 0], [0, -lss + M1], [d, -lss + M1], [dss - M1, -d], [dss - M1, 0]],
+    extrudeHeight: M1,
+    rotateX: -Math.PI / 2,
+    translate: [0, c + M1 / 2, 0]
+  });
 
   // Stranica u uglu (SCAD: cube([150, m1, v-c-2*m1]) @ [0,-m1,c+m1])
   addBox(g, 15, M1, v - c - 2 * M1, 0, -M1, c + M1, mK);
@@ -1590,15 +1739,28 @@ function build_sudopera(p, mats, settings) {
 
 /**
  * gue90rotiran — rotated upper corner 90° cabinet
+ * Rotation: SCAD rotate([0,0,90]) translate([0,-sl,0])
+ * Three.js equivalent: rotate Y by PI/2, then shift X by sl.
+ * Since gue90 uses only addBox (no JSCAD geoms), we transform the box positions directly.
  */
 function build_gue90rotiran(p, mats, settings) {
   const g = build_gue90(p, mats, settings);
-  // SCAD: rotate([0,0,90]) translate([0,-sl,0])
-  // Three.js equivalent: rotateY(PI/2) then translate(sl, 0, 0)
+  const sl = parseFloat(p.sl) || 60;
+  // Transform each box: rotate 90° around Y, then translate X by sl.
+  // Rotation 90° around Y: (x, y, z) → (z, y, -x)
+  if (g.boxes) {
+    g.boxes = g.boxes.map(b => {
+      const nx = b.cz + sl;
+      const nz = -b.cx;
+      // sx/sz swap due to Y rotation
+      return { ...b, cx: nx, cz: nz, sx: b.sz, sz: b.sx };
+    });
+  }
+  // Handle any residual JSCAD geoms (e.g. if gue90 grows handles later)
   for (const matKey in g.materials) {
     g.materials[matKey] = g.materials[matKey].map(geom => {
       let r = rotateY(Math.PI / 2, geom);
-      return translate([p.sl, 0, 0], r);
+      return translate([sl, 0, 0], r);
     });
   }
   return g;
@@ -1713,44 +1875,99 @@ export function buildKitchenModule(name, params, materialDefs, settings, posX, p
     return new THREE.Group();
   }
 
-  const mats = { front: 'front', korpus: 'korpus', radna: 'radna', granc: 'granc', cokla: 'cokla' };
-
-  // Convert numeric params
+  // Convert numeric params once
   const p = {};
   for (const [k, v] of Object.entries(params)) {
     const n = parseFloat(v);
     p[k] = isNaN(n) ? v : n;
   }
 
-  const rawJscad = builder(p, mats, settings);
+  // ── Resolve real Three.js materials (use global cache) ───────────────────────
+  const realMats = {
+    front:  _getCachedMat(materialDefs.front),
+    korpus: _getCachedMat(materialDefs.korpus),
+    radna:  _getCachedMat(materialDefs.radna),
+    granc:  _getCachedMat(materialDefs.granc),
+    cokla:  _getCachedMat(materialDefs.cokla),
+    handle: _getCachedMat('__handle__') || (() => {
+      const m = new THREE.MeshStandardMaterial({ color: 0xC0C0C0, roughness: 0.2, metalness: 0.9 });
+      _matCache.set('__handle__', m); return m;
+    })(),
+    leg: _getCachedMat('__leg__') || (() => {
+      const m = new THREE.MeshStandardMaterial({ color: 0x999999, roughness: 0.3, metalness: 0.5 });
+      _matCache.set('__leg__', m); return m;
+    })(),
+    box: _getCachedMat('__box__') || (() => {
+      const m = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.5 });
+      _matCache.set('__box__', m); return m;
+    })(),
+  };
+
   const group = new THREE.Group();
   group.name = name;
 
-  // Real material caching & binding
-  const realMats = {
-    front: createMaterial(materialDefs.front),
-    korpus: createMaterial(materialDefs.korpus),
-    radna: createMaterial(materialDefs.radna),
-    granc: createMaterial(materialDefs.granc),
-    cokla: createMaterial(materialDefs.cokla),
-    handle: new THREE.MeshStandardMaterial({ color: 0xC0C0C0, roughness: 0.2, metalness: 0.9 }),
-    leg: new THREE.MeshStandardMaterial({ color: 0x999999, roughness: 0.3, metalness: 0.5 }),
-    box: new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.5 })
-  };
+  // ── Geometry instance cache ───────────────────────────────────────────────────
+  // Key includes name, numeric params, and settings — anything that affects shape.
+  // materialDefs are NOT in the key: materials affect appearance only, not geometry.
+  const cacheKey = _geomCacheKey(name, p, settings);
+  const cached = _geomCache.get(cacheKey);
 
-  for (const [matKey, geoms] of Object.entries(rawJscad.materials)) {
-    if (!geoms || geoms.length === 0) continue;
+  if (cached) {
+    // Cache hit: clone BoxGeometry for each box, reuse BufferGeometry for JSCAD meshes
+    for (const b of cached.boxes) {
+      const geo = new THREE.BoxGeometry(b.sx, b.sz, b.sy);
+      const mm = (b.matKey && b.matKey.isMaterial) ? b.matKey
+               : (realMats[b.matKey] || realMats.korpus);
+      const mesh = new THREE.Mesh(geo, mm);
+      mesh.position.set(b.cx, b.cy, b.cz);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    }
+    for (const { bufferGeo, matKey } of cached.threeGeos) {
+      const mm = (matKey && matKey.isMaterial) ? matKey
+               : (realMats[matKey] || realMats.korpus);
+      const mesh = new THREE.Mesh(bufferGeo.clone(), mm);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    }
+  } else {
+    // Cache miss: run builder, convert, store results
+    const mats = { front: 'front', korpus: 'korpus', radna: 'radna', granc: 'granc', cokla: 'cokla' };
+    const raw = builder(p, mats, settings);
 
-    // Perform union on ALL shapes from the same material per element natively inside JSCAD engine!
-    const unifiedGeom = union(geoms);
-    // Construct native buffer geometry perfectly triangulated
-    const threeGeo = geom3ToThreeGeometry(unifiedGeom);
+    const cacheEntry = { boxes: raw.boxes || [], threeGeos: [] };
 
-    const mm = realMats[matKey] || realMats.korpus;
-    const mesh = new THREE.Mesh(threeGeo, mm);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    group.add(mesh);
+    // ── Fast path: boxes → direct THREE.BoxGeometry, no JSCAD union() ───────────
+    for (const b of cacheEntry.boxes) {
+      const geo = new THREE.BoxGeometry(b.sx, b.sz, b.sy);
+      const mm = (b.matKey && b.matKey.isMaterial) ? b.matKey
+               : (realMats[b.matKey] || realMats.korpus);
+      const mesh = new THREE.Mesh(geo, mm);
+      mesh.position.set(b.cx, b.cy, b.cz);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    }
+
+    // ── Slow path: JSCAD geometries (cylinders, polygons) → union + convert ──────
+    if (raw.materials) {
+      for (const [matKey, geoms] of Object.entries(raw.materials)) {
+        if (!geoms || geoms.length === 0) continue;
+        const unifiedGeom = union(geoms);
+        const bufferGeo = geom3ToThreeGeometry(unifiedGeom);
+        const mm = (matKey && matKey.isMaterial) ? matKey
+                 : (realMats[matKey] || realMats.korpus);
+        const mesh = new THREE.Mesh(bufferGeo, mm);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        group.add(mesh);
+        cacheEntry.threeGeos.push({ bufferGeo, matKey });
+      }
+    }
+
+    _geomCacheSet(cacheKey, cacheEntry);
   }
 
   // Apply position and rotation globally
@@ -1758,6 +1975,136 @@ export function buildKitchenModule(name, params, materialDefs, settings, posX, p
   group.position.set(posX, posZ, -posY + 0.1);
   group.rotation.y = -rotDeg * (Math.PI / 180);
 
+  return group;
+}
+
+/**
+ * buildKitchenModuleAsync — async version used by rebuildAllModules.
+ *
+ * For cache hits: behaves identically to buildKitchenModule (instant, sync).
+ * For cache misses with worker-capable specs: dispatches JSCAD slow path to worker
+ * in parallel with boxes-only group construction, then adds JSCAD meshes when done.
+ * Falls back to sync buildKitchenModule if worker is unavailable.
+ *
+ * Returns a Promise<THREE.Group>.
+ */
+export async function buildKitchenModuleAsync(name, params, materialDefs, settings, posX, posY, posZ, rotDeg) {
+  const builder = BUILDERS[name];
+  if (!builder) {
+    console.warn(`No builder for module: ${name}`);
+    return new THREE.Group();
+  }
+
+  const p = {};
+  for (const [k, v] of Object.entries(params)) {
+    const n = parseFloat(v);
+    p[k] = isNaN(n) ? v : n;
+  }
+
+  const cacheKey = _geomCacheKey(name, p, settings);
+
+  // Cache hit → instant, no async needed
+  if (_geomCache.has(cacheKey)) {
+    return buildKitchenModule(name, params, materialDefs, settings, posX, posY, posZ, rotDeg);
+  }
+
+  // Cache miss — try worker for slow path
+  const mats = { front: 'front', korpus: 'korpus', radna: 'radna', granc: 'granc', cokla: 'cokla' };
+  const raw = builder(p, mats, settings);
+
+  const realMats = {
+    front:  _getCachedMat(materialDefs.front),
+    korpus: _getCachedMat(materialDefs.korpus),
+    radna:  _getCachedMat(materialDefs.radna),
+    granc:  _getCachedMat(materialDefs.granc),
+    cokla:  _getCachedMat(materialDefs.cokla),
+    handle: _getCachedMat('__handle__') || new THREE.MeshStandardMaterial({ color: 0xC0C0C0, roughness: 0.2, metalness: 0.9 }),
+    leg: _getCachedMat('__leg__') || new THREE.MeshStandardMaterial({ color: 0x999999, roughness: 0.3, metalness: 0.5 }),
+  };
+  // Ensure handle/leg are cached
+  if (!_matCache.has('__handle__')) _matCache.set('__handle__', realMats.handle);
+  if (!_matCache.has('__leg__')) _matCache.set('__leg__', realMats.leg);
+
+  const group = new THREE.Group();
+  group.name = name;
+  const cacheEntry = { boxes: raw.boxes || [], threeGeos: [] };
+
+  // Fast path — boxes (sync, no blocking)
+  for (const b of cacheEntry.boxes) {
+    const geo = new THREE.BoxGeometry(b.sx, b.sz, b.sy);
+    const mm = (b.matKey && b.matKey.isMaterial) ? b.matKey
+             : (realMats[b.matKey] || realMats.korpus);
+    const mesh = new THREE.Mesh(geo, mm);
+    mesh.position.set(b.cx, b.cy, b.cz);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+  }
+
+  // Slow path — attempt worker, fall back to sync
+  const geomSpecs = raw.geomSpecs || [];
+  const specsByMatKey = new Map();
+  for (const { matKey, spec } of geomSpecs) {
+    if (!specsByMatKey.has(matKey)) specsByMatKey.set(matKey, []);
+    specsByMatKey.get(matKey).push(spec);
+  }
+  const workerGroups = Array.from(specsByMatKey.entries()).map(([matKey, specs]) => ({ matKey, specs }));
+
+  let workerGeos = null;
+  if (workerGroups.length > 0) {
+    workerGeos = await _dispatchToWorker(workerGroups).catch(() => null);
+  }
+
+  if (workerGeos) {
+    // Worker succeeded — add worker-computed meshes, store in cache
+    for (const { bufferGeo, matKey } of workerGeos) {
+      const mm = (matKey && matKey.isMaterial) ? matKey
+               : (realMats[matKey] || realMats.korpus);
+      const mesh = new THREE.Mesh(bufferGeo.clone(), mm);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+      cacheEntry.threeGeos.push({ bufferGeo, matKey });
+    }
+    // Also build any remaining JSCAD geoms that had no spec (e.g. cuboid diagonal door)
+    if (raw.materials) {
+      for (const [matKey, geoms] of Object.entries(raw.materials)) {
+        if (!geoms || geoms.length === 0) continue;
+        // Skip matKeys already handled by worker
+        if (specsByMatKey.has(matKey) && workerGeos.some(g => g.matKey === matKey)) continue;
+        const unifiedGeom = union(geoms);
+        const bufferGeo = geom3ToThreeGeometry(unifiedGeom);
+        const mm = (matKey && matKey.isMaterial) ? matKey
+                 : (realMats[matKey] || realMats.korpus);
+        const mesh = new THREE.Mesh(bufferGeo, mm);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        group.add(mesh);
+        cacheEntry.threeGeos.push({ bufferGeo, matKey });
+      }
+    }
+  } else {
+    // Worker unavailable or failed — sync JSCAD slow path
+    if (raw.materials) {
+      for (const [matKey, geoms] of Object.entries(raw.materials)) {
+        if (!geoms || geoms.length === 0) continue;
+        const unifiedGeom = union(geoms);
+        const bufferGeo = geom3ToThreeGeometry(unifiedGeom);
+        const mm = (matKey && matKey.isMaterial) ? matKey
+                 : (realMats[matKey] || realMats.korpus);
+        const mesh = new THREE.Mesh(bufferGeo, mm);
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
+        group.add(mesh);
+        cacheEntry.threeGeos.push({ bufferGeo, matKey });
+      }
+    }
+  }
+
+  _geomCacheSet(cacheKey, cacheEntry);
+
+  group.position.set(posX, posZ, -posY + 0.1);
+  group.rotation.y = -rotDeg * (Math.PI / 180);
   return group;
 }
 

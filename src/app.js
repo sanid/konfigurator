@@ -3,10 +3,10 @@
  * Meco Konfigurator 2026 — Electron/JSCAD Edition
  */
 import { MODULE_GROUPS, DEFAULT_MATERIALS, DEFAULT_SETTINGS, COLOR_PRESETS, TEXTURE_PRESETS } from './modules-config.js';
-import { buildKitchenModule } from './kitchen-builder.js';
+import { buildKitchenModule, clearGeomCache } from './kitchen-builder.js';
 import { buildDynamicPlan, validatePresetPlan, PRESET_LAYOUTS } from './presets.js';
 import { t, setLocale } from './i18n.js';
-import { initViewer, addModuleGroup, removeModuleGroup, shiftModuleGroups, clearAllGroups, setCameraView, resetCamera, highlightModule, resizeViewer, setViewerTheme, addFixtureMarker, removeFixtureMarker, clearFixtureMarkers, setLightingMode, getModuleIndexAt, getModuleSnapInfoAt, getModuleGroup, showMeasurements, clearMeasurements } from './viewer.js';
+import { initViewer, addModuleGroup, removeModuleGroup, shiftModuleGroups, moveModuleGroup, clearAllGroups, setCameraView, resetCamera, highlightModule, resizeViewer, setViewerTheme, addFixtureMarker, removeFixtureMarker, clearFixtureMarkers, setLightingMode, getModuleIndexAt, getModuleSnapInfoAt, getModuleGroup, showMeasurements, clearMeasurements } from './viewer.js';
 
 import { state, isDark, setIsDark, editingPlanIdx, setEditingPlanIdx, pushHistory, _history, _clonePlanState } from './state.js';
 import { showNotification } from './notifications.js';
@@ -259,6 +259,15 @@ const TOGGLE_LABELS = {
   fioke: 'Fioke',
   radna_ploca: 'Radna ploca'
 };
+
+// ─── Param rebuild debounce ────────────────────────────────────────────────────
+// Fires geometry rebuild 150ms after the last keystroke instead of per-keystroke.
+let _paramDebounceTimer = null;
+
+function _debouncedUpdateModule3D(planIdx) {
+  clearTimeout(_paramDebounceTimer);
+  _paramDebounceTimer = setTimeout(() => updateModule3D(planIdx), 150);
+}
 
 // ─── Input Modal ──────────────────────────────────────────────────────────────
 let _inputModalResolve = null;
@@ -719,7 +728,7 @@ export function refreshParamsForPlanItem(planIdx) {
           setPos('x', calcX);
         }
       }
-      updateModule3D(planIdx);
+      _debouncedUpdateModule3D(planIdx);
       if (state.showMeasurements) updateModuleMeasurements(planIdx);
       updateTotalCost();
       autoSave();
@@ -745,6 +754,7 @@ export function initToggles() {
       item.addEventListener('click', () => {
         state.settings[key] = !state.settings[key];
         document.querySelectorAll(`.toggle-item[data-key="${key}"]`).forEach(el => el.classList.toggle('active', state.settings[key]));
+        clearGeomCache();
         rebuildAllModules();
       });
       grid.appendChild(item);
@@ -778,11 +788,8 @@ function initPositionInputs() {
               if (!rightItem) continue;
               rightItem.pos[0] += delta;
               const rightIdx = state.plan.indexOf(rightItem);
-              try {
-                const group = buildKitchenModule(rightItem.ime, rightItem.p, state.materials, state.settings, rightItem.pos[0], rightItem.pos[1], rightItem.pos[2], rightItem.r);
-                removeModuleGroup(rightIdx);
-                addModuleGroup(rightIdx, group);
-              } catch (e) { console.error('3D shift rebuild failed for', rightItem.ime, e); }
+              // Position-only change: just move the existing group, no geometry rebuild
+              moveModuleGroup(rightIdx, rightItem.pos[0], rightItem.pos[1], rightItem.pos[2], rightItem.r || 0);
             }
             const [selRow, selCol] = state.selectedCell;
             if (selRow === itemRow && selCol > itemCol) {
@@ -798,12 +805,9 @@ function initPositionInputs() {
         } else if (axis === 'y') { item.pos[1] = val; }
         else if (axis === 'z') { item.pos[2] = val; }
         else if (axis === 'r') { item.r = val; }
-        try {
-          const group = buildKitchenModule(item.ime, item.p, state.materials, state.settings, item.pos[0], item.pos[1], item.pos[2], item.r);
-          removeModuleGroup(state.selectedPlanIdx);
-          addModuleGroup(state.selectedPlanIdx, group);
-          highlightModule(state.selectedPlanIdx);
-        } catch (e) { console.error('3D rebuild failed for', item.ime, e); }
+        // Position/rotation change: move existing group, no geometry rebuild needed
+        moveModuleGroup(state.selectedPlanIdx, item.pos[0], item.pos[1], item.pos[2], item.r || 0);
+        highlightModule(state.selectedPlanIdx);
         renderPlanList();
       }
     });

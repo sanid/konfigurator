@@ -37,14 +37,10 @@
 - **Preset layouts**: ✅ Done — "⬡ PREDLOŠCI RASPOREDA" button opens modal with 3 layout cards (Galley, L-shape, U-shape); each loads a full plan with pushHistory()
 
 ### Code Quality / Architecture
-- **`src/app.js` is 4,700+ lines** — one monolithic file mixing UI events, business logic, geometry, exports, modals, snapping. Hard to maintain and extend. Should be split into:
-  - `planManagement.js`
-  - `exporters.js`
-  - `materialSystem.js`
-  - `ui.js`
+- **`src/app.js` split** ✅ Done — 10 modules extracted (plan-manager, exports, material-picker, wall-grid, snap, special-elements, price-utils, state, notifications, project-storage). app.js reduced from ~3800 to ~1016 lines.
 - **No tests** anywhere — cutting-list calculations and cost math have zero test coverage
-- **Magic numbers** (board thicknesses `M=1.6`, `M1=1.8`) scattered throughout, not centralized
-- **No input validation** — negative or excessive values in parameter inputs go unchecked
+- **Magic numbers** ✅ Done — M, M1, MDF, HDF, RPL all exported from `modules-config.js`
+- **No input validation** ✅ Done — `PARAM_BOUNDS` + `clampParamValue()` in app.js clamps all parameter inputs
 
 ### Manufacturing / Export Gaps
 - **Hardware BOM**: No list of hinges, handles, drawer slides, plugs with part numbers
@@ -53,12 +49,15 @@
 - **Nesting integration**: CSV export exists but no optimization feedback
 
 ### Performance (matters at 15+ modules)
-- Every parameter change rebuilds the **entire** JSCAD geometry + Three.js scene — no dirty-flag or incremental update
-- No Web Worker offloading for heavy JSCAD calculations
-- No geometry instancing for identical repeated modules
+- ✅ **Debounce param inputs** — 150ms debounce on `updateModule3D` so typing doesn't trigger per-keystroke full rebuilds
+- ✅ **Geometry instance cache** (`_geomCache`) — keyed by `name|params|settings`; cache hit builds boxes only (no JSCAD at all), clones cached `BufferGeometry` for slow-path meshes
+- ✅ **Web Worker for JSCAD** — `jscad.worker.js` handles `union()+triangulate()` for cylinders/polygons off main thread; `buildKitchenModuleAsync` dispatches specs to worker and adds resulting `BufferGeometry`; `rebuildAllModules` uses `Promise.all` so all modules build concurrently
+- ✅ **Boxes bypass JSCAD entirely** — `addBox` stores plain JS data; `buildKitchenModule` creates `THREE.BoxGeometry` directly, skipping `union()`
+- ✅ **Position/rotation changes skip geometry rebuild** — `moveModuleGroup` just updates `group.position`/`group.rotation.y`
+- ✅ **Delete doesn't rebuild all modules** — `shiftModuleGroups` renumbers Map keys only
 
 ### Minor Polish
-- All strings are hardcoded in Bosnian (sr-RS) — no i18n structure if the app ever expands
+- **i18n** ✅ Done — `src/i18n.js` with Bosnian + English locales, `t()` helper used throughout app.js
 - No ARIA labels or keyboard navigation for accessibility
 - No material color swatch visible in the plan list items
 
@@ -76,3 +75,5 @@
 | Fix material price string matching → regex map | Small | ✅ Done |
 | Fix the 12 documented geometry bugs in `plan.md` | Medium | ✅ Done (mostly; cokla fronts standalone by design) |
 | Preset layouts (Galley, L-shape, U-shape) | Medium | ✅ Done |
+| Split app.js into focused modules | Large | ✅ Done |
+| i18n structure (Bosnian + English) | Small | ✅ Done |

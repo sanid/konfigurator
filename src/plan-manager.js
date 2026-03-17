@@ -1,6 +1,6 @@
 import { state, setEditingPlanIdx, editingPlanIdx, pushHistory } from './state.js';
-import { buildKitchenModule } from './kitchen-builder.js';
-import { addModuleGroup, removeModuleGroup, clearAllGroups, highlightModule, showMeasurements, clearMeasurements, clearFixtureMarkers } from './viewer.js';
+import { buildKitchenModule, buildKitchenModuleAsync } from './kitchen-builder.js';
+import { addModuleGroup, removeModuleGroup, clearAllGroups, highlightModule, showMeasurements, clearMeasurements, clearFixtureMarkers, shiftModuleGroups, moveModuleGroup } from './viewer.js';
 import { showNotification } from './notifications.js';
 import { updateWallGridDisplay, selectCell, WALL_COLS, rebuildCountertopsForRow } from './wall-grid.js';
 import { updateTotalCost } from './price-utils.js';
@@ -77,7 +77,7 @@ export function deleteModule(idx) {
   if (item.mat_pos) delete state.occupiedCells[`${item.mat_pos[0]},${item.mat_pos[1]}`];
   state.plan.splice(idx, 1);
   removeModuleGroup(idx);
-  rebuildAllModules();
+  shiftModuleGroups(idx);
   state.selectedPlanIdx = -1;
   setEditingPlanIdx(-1);
   import('./app.js').then(m => m.refreshParams());
@@ -141,12 +141,15 @@ export function clearPlan() {
 
 export function rebuildAllModules() {
   clearAllGroups();
-  state.plan.forEach((item, idx) => {
-    try {
-      const group = buildKitchenModule(item.ime, item.p, state.materials, state.settings, item.pos[0], item.pos[1], item.pos[2], item.r);
-      addModuleGroup(idx, group);
-    } catch (e) { console.error('3D rebuild failed for', item.ime, e); }
-  });
+  // Build all modules in parallel using async worker-backed builder.
+  // Each buildKitchenModuleAsync dispatches JSCAD slow path to a worker thread
+  // so multiple modules can be triangulated concurrently.
+  // Cache hits (same params as before) resolve instantly without involving the worker.
+  Promise.all(state.plan.map((item, idx) =>
+    buildKitchenModuleAsync(item.ime, item.p, state.materials, state.settings, item.pos[0], item.pos[1], item.pos[2], item.r || 0)
+      .then(group => addModuleGroup(idx, group))
+      .catch(e => console.error('3D rebuild failed for', item.ime, e))
+  ));
 }
 
 export function updateModule3D(idx) {
