@@ -18,7 +18,8 @@ export const DEFAULT_SETTINGS = {
   pozadina: true,
   celafioka: true,
   fioke: true,
-  radna_ploca: true
+  radna_ploca: true,
+  side_walls: false
 };
 
 // Default materials

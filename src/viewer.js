@@ -214,21 +214,25 @@ export function setLayoutWalls(layout, opts = {}) {
 
   if (needLeft) {
     sideWallLeft = makeSideWall(leftDepth);
-    // Side cabinets (r=270) sit at positive Three.js Z (toward viewer).
-    // Rotate plane so it faces +X (into the room from the left wall).
     sideWallLeft.rotation.y = Math.PI / 2;
-    // X=0 (left wall face), Y=half height, Z=+depth/2 (center of depth range 0→depth)
     sideWallLeft.position.set(0, wallH / 2, leftDepth / 2);
+    sideWallLeft.visible = !!opts.sideWallsVisible;
     scene.add(sideWallLeft);
   }
 
   if (needRight) {
     sideWallRight = makeSideWall(rightDepth);
-    // Rotate so it faces -X (into the room from the right wall).
     sideWallRight.rotation.y = -Math.PI / 2;
     sideWallRight.position.set(totalWidth, wallH / 2, rightDepth / 2);
+    sideWallRight.visible = !!opts.sideWallsVisible;
     scene.add(sideWallRight);
   }
+}
+
+/** Show or hide the side walls without removing them */
+export function setSideWallsVisible(visible) {
+  if (sideWallLeft)  sideWallLeft.visible  = visible;
+  if (sideWallRight) sideWallRight.visible = visible;
 }
 
 /** Handle canvas resize */

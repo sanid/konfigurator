@@ -6,7 +6,7 @@ import { MODULE_GROUPS, DEFAULT_MATERIALS, DEFAULT_SETTINGS, COLOR_PRESETS, TEXT
 import { buildKitchenModule, clearGeomCache } from './kitchen-builder.js';
 import { buildDynamicPlan, validatePresetPlan, PRESET_LAYOUTS } from './presets.js';
 import { t, setLocale } from './i18n.js';
-import { initViewer, addModuleGroup, removeModuleGroup, shiftModuleGroups, moveModuleGroup, clearAllGroups, setCameraView, resetCamera, highlightModule, resizeViewer, setViewerTheme, setLayoutWalls, addFixtureMarker, removeFixtureMarker, clearFixtureMarkers, setLightingMode, getModuleIndexAt, getModuleSnapInfoAt, getModuleGroup, showMeasurements, clearMeasurements } from './viewer.js';
+import { initViewer, addModuleGroup, removeModuleGroup, shiftModuleGroups, moveModuleGroup, clearAllGroups, setCameraView, resetCamera, highlightModule, resizeViewer, setViewerTheme, setLayoutWalls, setSideWallsVisible, addFixtureMarker, removeFixtureMarker, clearFixtureMarkers, setLightingMode, getModuleIndexAt, getModuleSnapInfoAt, getModuleGroup, showMeasurements, clearMeasurements } from './viewer.js';
 
 import { state, isDark, setIsDark, editingPlanIdx, setEditingPlanIdx, pushHistory, _history, _clonePlanState } from './state.js';
 import { showNotification } from './notifications.js';
@@ -257,8 +257,11 @@ const TOGGLE_LABELS = {
   pozadina: 'Pozadina',
   celafioka: 'Cela fioka',
   fioke: 'Fioke',
-  radna_ploca: 'Radna ploca'
+  radna_ploca: 'Radna ploca',
+  side_walls: 'Bočni zidovi'
 };
+// Keys that only toggle scene visibility, no geometry rebuild needed
+const TOGGLE_VISIBILITY_ONLY = new Set(['side_walls']);
 
 // ─── Param rebuild debounce ────────────────────────────────────────────────────
 // Fires geometry rebuild 150ms after the last keystroke instead of per-keystroke.
@@ -822,7 +825,8 @@ function initPresetModal() {
       leftDepth:  lss + leftCount  * sw,
       rightDepth: lss + rightCount * sw,
       totalWidth: width,
-      isDark
+      isDark,
+      sideWallsVisible: state.settings.side_walls
     });
 
     showNotification('Predlozak primijenjen', 'success');
@@ -1069,8 +1073,12 @@ export function initToggles() {
           el.classList.toggle('active', state.settings[key]);
           el.setAttribute('aria-checked', state.settings[key] ? 'true' : 'false');
         });
-        clearGeomCache();
-        rebuildAllModules();
+        if (TOGGLE_VISIBILITY_ONLY.has(key)) {
+          if (key === 'side_walls') setSideWallsVisible(state.settings.side_walls);
+        } else {
+          clearGeomCache();
+          rebuildAllModules();
+        }
       });
       grid.appendChild(item);
     }
