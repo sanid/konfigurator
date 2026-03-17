@@ -806,14 +806,13 @@ function initPresetModal() {
     state.occupiedCells = newOccupied;
     state.selectedPlanIdx = -1;
     setEditingPlanIdx(-1);
+    // Set activeLayout before updateWallGridDisplay so sections render correctly
+    state.activeLayout = { type: activePresetId, side, width, leftCount, rightCount, isGola };
     rebuildAllModules();
     refreshParams();
     updateWallGridDisplay();
     renderPlanList();
     updateTotalCost();
-
-    // Save layout config in state for wall grid display
-    state.activeLayout = { type: activePresetId, side, width, leftCount, rightCount, isGola };
 
     // Update side walls in the viewer
     const lss = isGola ? 80 : 90;

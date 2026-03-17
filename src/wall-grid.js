@@ -247,7 +247,7 @@ function _buildSections(layout) {
   const upper2 = _itemsForMatRow(20);
   const tall2  = _itemsForMatRow(21);
 
-  if (type === 'galley' || base2.length === 0) {
+  if (type === 'galley') {
     return [{
       label: 'Zid',
       slotsByRow: {
