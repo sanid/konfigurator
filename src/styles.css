@@ -1014,6 +1014,19 @@ body.light .pin-label:hover {
   opacity: 0.4;
 }
 
+.wg-cell.add-slot {
+  border: 1px dashed var(--accent);
+  color: var(--accent);
+  opacity: 0.6;
+  font-size: 14px;
+  font-weight: 300;
+}
+
+.wg-cell.add-slot:hover {
+  opacity: 1;
+  background: var(--accent-glow);
+}
+
 /* ── Wall grid replace tooltip ─────────────────────────── */
 .wg-tooltip {
   position: fixed;

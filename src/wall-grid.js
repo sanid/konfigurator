@@ -90,20 +90,29 @@ export function updateWallGridDisplay() {
 
       // Render cells for this section row
       section.slots.forEach(slot => {
-        const planIdx = _findPlanIdx(slot.matRow ?? rowIdx, slot.matCol);
-        const item    = planIdx >= 0 ? state.plan[planIdx] : null;
+        // Use planMatRow for the actual plan lookup, matRow for display highlight row
+        const planIdx  = _findPlanIdx(slot.planMatRow, slot.matCol);
+        const item     = planIdx >= 0 ? state.plan[planIdx] : null;
         const isSelected = planIdx >= 0 && planIdx === state.selectedPlanIdx;
+        const showHere = rowIdx === slot.matRow; // only light up on the display row
 
         const cell = document.createElement('div');
         const widthPx = Math.max(20, Math.round(slot.widthCm * PX_PER_CM));
         cell.style.width  = widthPx + 'px';
         cell.style.height = CELL_H + 'px';
 
-        if (slot.isCorner && rowIdx === slot.matRow) {
+        if (slot.isEmpty && showHere) {
+          cell.className = 'wg-cell add-slot';
+          cell.textContent = '+';
+          cell.title = 'Dodaj modul ovdje';
+        } else if (slot.isEmpty) {
+          cell.className = 'wg-cell empty';
+          cell.textContent = '—';
+        } else if (slot.isCorner && showHere) {
           cell.className = 'wg-cell corner' + (isSelected ? ' selected' : '');
           cell.textContent = slot.cornerLabel || '⌐';
           cell.title = item ? item.ime.replace(/_/g, ' ') : 'Ugaoni element';
-        } else if (item && rowIdx === slot.matRow) {
+        } else if (item && showHere) {
           cell.className = 'wg-cell occupied' + (isSelected ? ' selected' : '');
           cell.textContent = item.ime.substring(0, 3).toUpperCase();
           cell.title = item.ime.replace(/_/g, ' ') + ' (' + slot.widthCm + 'cm)';
@@ -112,19 +121,25 @@ export function updateWallGridDisplay() {
           cell.textContent = '—';
         }
 
-        // Click: select + show replace tooltip
+        // Click handler
         cell.addEventListener('click', (e) => {
           e.stopPropagation();
-          if (planIdx >= 0) {
+          if (slot.isEmpty) {
+            // Empty add-slot: set position and open an add-module tooltip
+            state.selectedCell = [slot.planMatRow, slot.matCol];
+            _setPos('x', slot.posX ?? 0);
+            _setPos('z', WALL_ROWS.find(r => r.row === slot.matRow)?.z ?? 0);
+            updateWallGridDisplay();
+            if (showHere) _showAddTooltip(cell, slot);
+          } else if (planIdx >= 0) {
             state.selectedPlanIdx = planIdx;
             updateWallGridDisplay();
             import('./plan-manager.js').then(m => m.selectModuleByIndex(planIdx));
-            _showReplaceTooltip(cell, planIdx, slot.isCorner);
+            if (showHere) _showReplaceTooltip(cell, planIdx, slot.isCorner);
           } else {
-            // Empty slot — select the cell position for manual addition
-            state.selectedCell = [rowIdx, slot.matCol];
+            state.selectedCell = [slot.planMatRow, slot.matCol];
             _setPos('x', slot.posX ?? 0);
-            _setPos('z', z);
+            _setPos('z', WALL_ROWS.find(r => r.row === slot.matRow)?.z ?? 0);
             updateWallGridDisplay();
           }
         });
@@ -276,28 +291,128 @@ function _buildSections(layout) {
   return [{ label: 'Zid', slots: _slotsFromItems(baseItems, 2) }];
 }
 
-// Build slot descriptors from plan items with a given mat_pos row
+// Build slot descriptors from plan items with a given mat_pos row.
+// displayRow is the WALL_ROWS rowIdx where they should light up (always 2 = Z=0 for base cabinets).
 function _slotsFromItems(itemPairs, matRow, isSideWall = false) {
-  return itemPairs.map(({ item, idx }) => {
+  // All base cabinets (including side-wall ones) are floor-level → display on rowIdx 2 (Z=0)
+  const displayRow = 2;
+
+  const slots = itemPairs.map(({ item, idx }) => {
     const isCorner = CORNER_NAMES.has(item.ime);
     const widthCm  = item.sirina || parseFloat(item.p.s || item.p.dss || 60);
     return {
       matCol:      item.mat_pos[1],
-      matRow,
+      matRow:      displayRow,   // always highlight on the bottom row
+      planMatRow:  matRow,       // the actual mat_pos row (for lookups)
       widthCm,
       isCorner,
-      cornerLabel: isCorner ? (item.ime.includes('desni') ? '⌐' : '⌐') : null,
+      cornerLabel: isCorner ? '⌐' : null,
       posX:        item.pos[0],
-      planIdx:     idx
+      planIdx:     idx,
+      isEmpty:     false
     };
   });
+
+  // Compute next available matCol and X position for the empty add-slot
+  const lastItem  = itemPairs.length > 0 ? itemPairs[itemPairs.length - 1].item : null;
+  const nextCol   = lastItem ? lastItem.mat_pos[1] + 1 : 1;
+  const lastWidth = lastItem ? (lastItem.sirina || parseFloat(lastItem.p.s || lastItem.p.dss || 60)) : 0;
+  const nextX     = lastItem ? lastItem.pos[0] + lastWidth : 0;
+
+  slots.push({
+    matCol:     nextCol,
+    matRow:     displayRow,
+    planMatRow: matRow,
+    widthCm:    60,       // default empty slot width
+    isCorner:   false,
+    cornerLabel: null,
+    posX:       nextX,
+    planIdx:    -1,
+    isEmpty:    true
+  });
+
+  return slots;
 }
 
-// Find plan index by mat_pos
-function _findPlanIdx(row, col) {
+// Find plan index by mat_pos (planMatRow = actual mat_pos[0] value)
+function _findPlanIdx(planMatRow, col) {
   if (col == null) return -1;
-  const item = state.plan.find(m => m.mat_pos && m.mat_pos[0] === row && m.mat_pos[1] === col);
+  const item = state.plan.find(m => m.mat_pos && m.mat_pos[0] === planMatRow && m.mat_pos[1] === col);
   return item ? state.plan.indexOf(item) : -1;
+}
+
+// ── Private: add-slot tooltip (empty slot at end of wall) ────────────────────
+function _showAddTooltip(anchorEl, slot) {
+  // Reuse the same wg-tooltip but in "add" mode — _tooltipActiveIdx = -2 signals add mode
+  if (_tooltipActiveIdx === -2) { _hideTooltip(); return; }
+  _tooltipActiveIdx = -2;
+
+  const tt   = document.getElementById('wg-tooltip');
+  const list = document.getElementById('wg-tooltip-list');
+  if (!tt || !list) return;
+
+  list.innerHTML = '';
+
+  const moduleNames = [...new Set(
+    Object.values(MODULE_GROUPS).flatMap(g => Object.keys(g)).filter(n => !CORNER_NAMES.has(n))
+  )];
+
+  moduleNames.forEach(name => {
+    const el = document.createElement('div');
+    el.className = 'wg-tooltip-item';
+    el.textContent = name.replace(/_/g, ' ');
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      _addModuleAtSlot(slot, name);
+      _hideTooltip();
+    });
+    list.appendChild(el);
+  });
+
+  const rect = anchorEl.getBoundingClientRect();
+  tt.classList.remove('hidden');
+  let top  = rect.bottom + 6;
+  let left = rect.left;
+  if (top + 260 > window.innerHeight) top = rect.top - 260;
+  if (left + 200 > window.innerWidth)  left = window.innerWidth - 206;
+  tt.style.top  = top  + 'px';
+  tt.style.left = left + 'px';
+}
+
+function _addModuleAtSlot(slot, ime) {
+  pushHistory();
+  const category = Object.keys(MODULE_GROUPS).find(cat => MODULE_GROUPS[cat][ime]);
+  if (!category) return;
+  const p = Object.fromEntries((MODULE_GROUPS[category][ime] || []).map(([k, v]) => [k, v]));
+  p.tip_klizaca = 'skriveni';
+
+  const sirina = parseFloat(p.s || p.dss || 60);
+  const z = WALL_ROWS.find(r => r.row === slot.matRow)?.z ?? 0;
+  // rotation: side walls use r=270 (left, matRow=1) or r=90 (right, matRow=3), back wall r=0
+  const r = slot.planMatRow === 1 ? 270 : slot.planMatRow === 3 ? 90 : 0;
+
+  const entry = {
+    ime,
+    p,
+    pos:     [slot.posX ?? 0, 0, z],
+    r,
+    mat_pos: [slot.planMatRow, slot.matCol],
+    sirina
+  };
+
+  state.plan.push(entry);
+  const idx = state.plan.length - 1;
+  state.occupiedCells[`${slot.planMatRow},${slot.matCol}`] = { sirina, ime };
+
+  try {
+    const group = buildKitchenModule(ime, p, state.materials, state.settings, entry.pos[0], entry.pos[1], entry.pos[2], r);
+    addModuleGroup(idx, group);
+    updateWallGridDisplay();
+    import('./plan-manager.js').then(m => { m.renderPlanList(); });
+    import('./price-utils.js').then(({ updateTotalCost }) => updateTotalCost());
+    import('./notifications.js').then(({ showNotification }) => showNotification('Dodano: ' + ime, 'success'));
+    import('./project-storage.js').then(({ autoSave }) => autoSave());
+  } catch (e) { console.error('Add from slot failed', e); }
 }
 
 // ── Private: replace tooltip ──────────────────────────────────────────────────
