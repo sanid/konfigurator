@@ -489,46 +489,309 @@ function initOverlayToggles() {
 
 function initPresetModal() {
   const btnPresets = document.getElementById('btn-presets');
-  const modal = document.getElementById('modal-presets');
-  const closeBtn = document.getElementById('modal-presets-close');
-  const cancelBtn = document.getElementById('modal-presets-cancel');
-  const grid = document.getElementById('presets-grid');
-  const optionsPanel = document.getElementById('preset-options');
-  const golaWrap = document.getElementById('preset-gola-wrap');
-  const widthWrap = document.getElementById('preset-width-wrap');
-  const lSideWrap = document.getElementById('preset-l-side-wrap');
+  const modal      = document.getElementById('modal-presets');
+  const closeBtn   = document.getElementById('modal-presets-close');
+  const cancelBtn  = document.getElementById('modal-presets-cancel');
+  const addBtn     = document.getElementById('preset-add-btn');
+  const step1      = document.getElementById('preset-step1');
+  const step2      = document.getElementById('preset-step2');
+  const grid       = document.getElementById('presets-grid');
+  const backBtn    = document.getElementById('preset-back-btn');
+  const titleEl    = document.getElementById('preset-step2-title');
+  const layoutWrap = document.getElementById('preset-layout-wrap');
+  const tooltip    = document.getElementById('preset-mod-tooltip');
+  const tooltipList= document.getElementById('preset-mod-tooltip-list');
+  const sideWrap   = document.getElementById('preset-side-wrap');
+  const countsWrap = document.getElementById('preset-counts-wrap');
+  const leftCountWrap  = document.getElementById('preset-left-count-wrap');
+  const rightCountWrap = document.getElementById('preset-right-count-wrap');
   if (!btnPresets || !modal || !grid) return;
 
+  // ── state ──────────────────────────────────────────────────────────────────
+  let activePresetId = null;
+  let activeSide = 'left'; // for l-shape: which side has the corner
+  // slotModules: maps slotKey → module name (for overridable slots)
+  let slotModules = {};
+
+  // ── helpers ────────────────────────────────────────────────────────────────
+  function getOpts() {
+    return {
+      isGola:     document.getElementById('preset-gola').checked,
+      width:      parseFloat(document.getElementById('preset-width-main').value) || 300,
+      side:       activeSide,
+      leftCount:  parseInt(document.getElementById('preset-left-count').value) || 2,
+      rightCount: parseInt(document.getElementById('preset-right-count').value) || 2,
+    };
+  }
+
+  // All "Donji" module names (excluding corner types which are auto-placed)
+  const CORNER_NAMES = new Set(['dug_element_90', 'dug_element_90_gola', 'dug_element_90_desni', 'dug_element_90_desni_gola']);
+  function getDonjiFlatList() {
+    return Object.keys(MODULE_GROUPS['Donji'] || {}).filter(n => !CORNER_NAMES.has(n));
+  }
+
+  // ── step navigation ─────────────────────────────────────────────────────────
+  function showStep1() {
+    step1.classList.remove('hidden');
+    step2.classList.add('hidden');
+    addBtn.style.display = 'none';
+    hideTooltip();
+  }
+  function showStep2(preset) {
+    activePresetId = preset.id;
+    titleEl.textContent = preset.title;
+    step1.classList.add('hidden');
+    step2.classList.remove('hidden');
+    addBtn.style.display = '';
+    // show/hide side options
+    const hasSides = preset.id !== 'galley';
+    sideWrap.style.display = hasSides ? '' : 'none';
+    countsWrap.style.display = hasSides ? '' : 'none';
+    // for u-shape both sides shown; for l-shape only one side shown
+    // (left-count = left side, right-count = right side)
+    leftCountWrap.style.display  = (preset.id === 'u-shape' || (preset.id === 'l-shape' && activeSide === 'left')) ? '' : 'none';
+    rightCountWrap.style.display = (preset.id === 'u-shape' || (preset.id === 'l-shape' && activeSide === 'right')) ? '' : 'none';
+    slotModules = {};
+    renderLayout();
+  }
+
+  // ── shape grid (step 1) ────────────────────────────────────────────────────
   grid.innerHTML = '';
   for (const preset of PRESET_LAYOUTS) {
     const card = document.createElement('div');
     card.className = 'preset-card';
     card.innerHTML = `${preset.svg}<div class="preset-card-title">${preset.title}</div><div class="preset-card-desc">${preset.desc.replace(/\n/g, '<br>')}</div>`;
-    card.addEventListener('mouseenter', () => {
-      optionsPanel.classList.remove('hidden');
-      golaWrap.style.display = 'flex';
-      widthWrap.style.display = 'block';
-      lSideWrap.style.display = (preset.id === 'l-shape' || preset.id === 'u-shape') ? 'block' : 'none';
-    });
-    card.addEventListener('click', () => {
-      const isGola = document.getElementById('preset-gola').checked;
-      const width = parseFloat(document.getElementById('preset-width-main').value) || 300;
-      const side = document.getElementById('preset-l-side').value;
-      const dynamicPlan = buildDynamicPlan(preset.id, { isGola, width, side });
-      applyPreset({ ...preset, plan: dynamicPlan });
-      modal.classList.add('hidden');
-      optionsPanel.classList.add('hidden');
-    });
+    card.addEventListener('click', () => showStep2(preset));
     grid.appendChild(card);
   }
 
-  function applyPreset(preset) {
+  // ── side toggle ────────────────────────────────────────────────────────────
+  document.querySelectorAll('.preset-side-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeSide = btn.dataset.side;
+      document.querySelectorAll('.preset-side-btn').forEach(b => b.classList.toggle('active', b.dataset.side === activeSide));
+      // update which count inputs are shown for l-shape
+      if (activePresetId === 'l-shape') {
+        leftCountWrap.style.display  = activeSide === 'left'  ? '' : 'none';
+        rightCountWrap.style.display = activeSide === 'right' ? '' : 'none';
+      }
+      slotModules = {};
+      renderLayout();
+    });
+  });
+
+  // re-render on any option change
+  ['preset-gola', 'preset-width-main', 'preset-left-count', 'preset-right-count'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => { slotModules = {}; renderLayout(); });
+  });
+
+  // ── layout renderer ─────────────────────────────────────────────────────────
+  // A "slot" is a clickable cabinet cell. Each has a key like "main-2" or "left-1".
+  // We describe the grid as rows of slot descriptors:
+  //   { key, type: 'corner'|'cabinet'|'empty', label, widthCm }
+  function buildSlotRows() {
+    const opts = getOpts();
+    const { isGola, width, side, leftCount, rightCount } = opts;
+    const dss = isGola ? 100 : 80;
+    const lss = isGola ? 80  : 90;
+    const sw  = 60;
+    const suf = isGola ? '_gola' : '';
+
+    // main wall fills: compute count & widths
+    function mainSlots(startX, wallLen) {
+      const count = Math.max(1, Math.floor(wallLen / sw));
+      const remainder = wallLen - (count - 1) * sw;
+      const slots = [];
+      for (let i = 0; i < count; i++) {
+        const w = (i === count - 1) ? remainder : sw;
+        const isMiddle = count > 1 && i === Math.floor(count / 2);
+        const key = `main-${i}`;
+        slots.push({ key, type: 'cabinet', defaultIme: isMiddle ? 'fiokar' + suf : 'radni_stol' + suf, widthCm: w });
+      }
+      return slots;
+    }
+
+    if (activePresetId === 'galley') {
+      const main = mainSlots(0, width);
+      return [
+        { label: 'Glavna strana', slots: main }
+      ];
+    }
+
+    if (activePresetId === 'l-shape') {
+      if (side === 'right') {
+        const main = mainSlots(0, width - dss);
+        main.push({ key: 'corner-r', type: 'corner', label: '⌐', widthCm: dss });
+        const sideSlots = [];
+        for (let i = 0; i < rightCount; i++) sideSlots.push({ key: `right-${i}`, type: 'cabinet', defaultIme: 'radni_stol' + suf, widthCm: sw });
+        // spacer fills the space under main-wall cabinets (all but last corner slot)
+        const mainNonCornerPx = main.slice(0, -1).reduce((a, s) => a + slotWidthPx(s.widthCm) + 4, 0);
+        const sidePx = sideSlots.reduce((a, s) => a + slotWidthPx(s.widthCm) + 4, 0);
+        const spacerPx = Math.max(0, mainNonCornerPx - sidePx);
+        return [
+          { label: 'Glavna strana', slots: main },
+          { label: 'Desna strana', slots: [{ key: 'spacer-r', type: 'empty', _px: spacerPx }, ...sideSlots] }
+        ];
+      } else {
+        const main = [{ key: 'corner-l', type: 'corner', label: '⌐', widthCm: dss }, ...mainSlots(dss, width - dss)];
+        const sideSlots = [];
+        for (let i = 0; i < leftCount; i++) sideSlots.push({ key: `left-${i}`, type: 'cabinet', defaultIme: 'radni_stol' + suf, widthCm: sw });
+        const mainNonCornerPx = main.slice(1).reduce((a, s) => a + slotWidthPx(s.widthCm) + 4, 0);
+        const sidePx = sideSlots.reduce((a, s) => a + slotWidthPx(s.widthCm) + 4, 0);
+        const spacerPx = Math.max(0, mainNonCornerPx - sidePx);
+        return [
+          { label: 'Glavna strana', slots: main },
+          { label: 'Lijeva strana', slots: [...sideSlots, { key: 'spacer-l', type: 'empty', _px: spacerPx }] }
+        ];
+      }
+    }
+
+    if (activePresetId === 'u-shape') {
+      const mainWallLen = width - dss - lss;
+      const main = [
+        { key: 'corner-l', type: 'corner', label: '⌐', widthCm: dss },
+        ...mainSlots(dss, mainWallLen),
+        { key: 'corner-r', type: 'corner', label: '⌐', widthCm: lss }
+      ];
+      const leftSide = [], rightSide = [];
+      for (let i = 0; i < leftCount; i++) leftSide.push({ key: `left-${i}`, type: 'cabinet', defaultIme: 'radni_stol' + suf, widthCm: sw });
+      for (let i = 0; i < rightCount; i++) rightSide.push({ key: `right-${i}`, type: 'cabinet', defaultIme: 'radni_stol' + suf, widthCm: sw });
+      // spacer fills the middle (between left side and right side) matching the inner main-wall width
+      const mainInnerPx = main.slice(1, -1).reduce((a, s) => a + slotWidthPx(s.widthCm) + 4, 0);
+      const leftPx  = leftSide.reduce((a, s) => a + slotWidthPx(s.widthCm) + 4, 0);
+      const rightPx = rightSide.reduce((a, s) => a + slotWidthPx(s.widthCm) + 4, 0);
+      const spacerPx = Math.max(0, mainInnerPx - leftPx - rightPx);
+      return [
+        { label: 'Glavna strana', slots: main },
+        { label: 'Lijevo / Desno', slots: [...leftSide, { key: 'spacer-m', type: 'empty', _px: spacerPx }, ...rightSide] }
+      ];
+    }
+
+    return [];
+  }
+
+  const PX_PER_CM = 0.8; // visual scale factor
+  function slotWidthPx(widthCm) {
+    return Math.max(36, Math.round(widthCm * PX_PER_CM));
+  }
+  function rowTotalPx(slots) {
+    // 28px label + 32px row-label offset, then sum of slot widths + 4px gap per slot
+    return slots.reduce((acc, s) => acc + slotWidthPx(s.widthCm) + 4, 0);
+  }
+
+  function renderLayout() {
+    if (!activePresetId) return;
+    hideTooltip();
+    layoutWrap.innerHTML = '';
+    const rows = buildSlotRows();
+    const donjiFlatList = getDonjiFlatList();
+
+    rows.forEach(({ label, slots }) => {
+      const rowDiv = document.createElement('div');
+      rowDiv.className = 'preset-layout-row';
+
+      const rowLabel = document.createElement('div');
+      rowLabel.className = 'preset-layout-row-label';
+      rowLabel.textContent = label;
+      rowDiv.appendChild(rowLabel);
+
+      slots.forEach(slot => {
+        const el = document.createElement('div');
+        const px = slot._px != null ? slot._px : slotWidthPx(slot.widthCm || 60);
+        el.style.width = px + 'px';
+
+        if (slot.type === 'empty') {
+          el.className = 'preset-slot empty-space';
+          if (px <= 0) { return; } // skip zero-width spacers
+          rowDiv.appendChild(el);
+          return;
+        }
+
+        if (slot.type === 'corner') {
+          el.className = 'preset-slot corner';
+          el.textContent = slot.label || 'L';
+          el.title = 'Ugaoni element (fiksno)';
+          rowDiv.appendChild(el);
+          return;
+        }
+
+        // cabinet slot
+        el.className = 'preset-slot';
+        const currentIme = slotModules[slot.key] || slot.defaultIme;
+        const shortName = currentIme.replace(/_gola$/, '').replace(/_/g, ' ');
+        el.innerHTML = `<span class="preset-slot-name">${shortName}</span><span class="preset-slot-width">${slot.widthCm}cm</span>`;
+        el.dataset.slotKey = slot.key;
+        el.dataset.defaultIme = slot.defaultIme;
+
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openSlotTooltip(el, slot, donjiFlatList);
+        });
+
+        rowDiv.appendChild(el);
+      });
+
+      layoutWrap.appendChild(rowDiv);
+    });
+  }
+
+  // ── module picker tooltip ──────────────────────────────────────────────────
+  let activeSlotKey = null;
+
+  function openSlotTooltip(el, slot, moduleList) {
+    if (activeSlotKey === slot.key) { hideTooltip(); return; }
+    activeSlotKey = slot.key;
+    tooltipList.innerHTML = '';
+    const currentIme = slotModules[slot.key] || slot.defaultIme;
+    moduleList.forEach(name => {
+      const item = document.createElement('div');
+      item.className = 'preset-mod-item' + (name === currentIme ? ' selected' : '');
+      item.textContent = name.replace(/_/g, ' ');
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        slotModules[slot.key] = name;
+        hideTooltip();
+        renderLayout();
+      });
+      tooltipList.appendChild(item);
+    });
+
+    // position tooltip near the slot
+    const rect = el.getBoundingClientRect();
+    tooltip.classList.remove('hidden');
+    // try below first, flip up if needed
+    let top = rect.bottom + 6;
+    if (top + 260 > window.innerHeight) top = rect.top - 260;
+    let left = rect.left;
+    if (left + 200 > window.innerWidth) left = window.innerWidth - 206;
+    tooltip.style.top  = top  + 'px';
+    tooltip.style.left = left + 'px';
+  }
+
+  function hideTooltip() {
+    tooltip.classList.add('hidden');
+    activeSlotKey = null;
+  }
+
+  document.addEventListener('click', (e) => {
+    if (!tooltip.contains(e.target)) hideTooltip();
+  });
+
+  // ── apply preset ───────────────────────────────────────────────────────────
+  function applyAndClose() {
+    const opts = getOpts();
+    const { isGola, leftCount, rightCount } = opts;
+    const suf = isGola ? '_gola' : '';
+
+    // Build the dynamic plan using current options
+    const dynamicPlan = buildDynamicPlan(activePresetId, { ...opts, slotModules, suf });
+
     pushHistory();
     const newOccupied = {};
-    preset.plan.forEach(item => {
+    dynamicPlan.forEach(item => {
       if (item.mat_pos) newOccupied[`${item.mat_pos[0]},${item.mat_pos[1]}`] = { sirina: item.sirina, ime: item.ime };
     });
-    state.plan = JSON.parse(JSON.stringify(preset.plan));
+    state.plan = JSON.parse(JSON.stringify(dynamicPlan));
     state.occupiedCells = newOccupied;
     state.selectedPlanIdx = -1;
     setEditingPlanIdx(-1);
@@ -537,12 +800,23 @@ function initPresetModal() {
     updateWallGridDisplay();
     renderPlanList();
     updateTotalCost();
-    showNotification('Predlozak "' + preset.title + '" primijenjen', 'success');
+    showNotification('Predlozak primijenjen', 'success');
+    closeModal();
   }
 
-  btnPresets.addEventListener('click', () => { modal.classList.remove('hidden'); optionsPanel.classList.add('hidden'); });
-  closeBtn?.addEventListener('click', () => { modal.classList.add('hidden'); optionsPanel.classList.add('hidden'); });
-  cancelBtn?.addEventListener('click', () => { modal.classList.add('hidden'); optionsPanel.classList.add('hidden'); });
+  function closeModal() {
+    modal.classList.add('hidden');
+    hideTooltip();
+    showStep1();
+  }
+
+  // ── wire up ────────────────────────────────────────────────────────────────
+  addBtn.addEventListener('click', applyAndClose);
+  backBtn.addEventListener('click', showStep1);
+  btnPresets.addEventListener('click', () => { showStep1(); modal.classList.remove('hidden'); });
+  closeBtn?.addEventListener('click', closeModal);
+  cancelBtn?.addEventListener('click', closeModal);
+  modal.querySelector('.modal-backdrop')?.addEventListener('click', closeModal);
 }
 
 function initLanguageSwitcher() {

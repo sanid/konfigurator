@@ -467,40 +467,74 @@
    <!-- Preset Layouts Modal -->
    <div id="modal-presets" class="modal hidden">
       <div class="modal-backdrop"></div>
-      <div class="modal-box modal-wide">
+      <div class="modal-box modal-presets-box">
          <div class="modal-header">
             <span>⬡ PREDLOŠCI RASPOREDA</span>
             <button class="modal-close" id="modal-presets-close" aria-label="Zatvori predloške">✕</button>
          </div>
-         <div class="modal-body" style="padding:20px;">
-            <p style="font-size:11px; color:var(--text-secondary); margin:0 0 16px 0;">
-               Izaberi raspored za brz početak. Postojeći plan će biti zamijenjen.
-            </p>
-            <div id="preset-options" class="preset-options hidden" style="display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end; margin-bottom:20px; padding:12px; background:var(--bg-panel); border-radius:var(--radius); border:1px solid var(--border);">
-               <div class="field-group" id="preset-gola-wrap" style="margin:0;">
-                  <label class="field-label" style="display:flex; align-items:center; gap:8px; cursor:pointer; margin:0; padding-bottom:5px;">
-                     <input type="checkbox" id="preset-gola" style="width:16px; height:16px;">
-                     <span style="font-size:11px; font-weight:700;">GOLA SISTEM</span>
+         <div class="modal-body preset-modal-body">
+
+            <!-- STEP 1: shape picker -->
+            <div id="preset-step1">
+               <p class="preset-step-hint">Izaberi oblik rasporeda:</p>
+               <div id="presets-grid" class="preset-shape-grid">
+                  <!-- populated by JS -->
+               </div>
+            </div>
+
+            <!-- STEP 2: options + interactive grid -->
+            <div id="preset-step2" class="hidden">
+               <!-- top bar: back + title -->
+               <div class="preset-step2-header">
+                  <button class="btn preset-back-btn" id="preset-back-btn">← Nazad</button>
+                  <span class="preset-step2-title" id="preset-step2-title"></span>
+               </div>
+
+               <!-- options row -->
+               <div class="preset-opts-bar">
+                  <label class="preset-opt-label">
+                     <input type="checkbox" id="preset-gola"> GOLA SISTEM
                   </label>
+                  <div class="preset-opt-group">
+                     <span class="preset-opt-key">Glavni zid (cm)</span>
+                     <input type="number" id="preset-width-main" class="num-input" value="300" step="10" min="120">
+                  </div>
+                  <!-- L-side toggle (hidden for galley) -->
+                  <div class="preset-opt-group" id="preset-side-wrap">
+                     <span class="preset-opt-key">Ugao</span>
+                     <div class="preset-side-toggle">
+                        <button class="preset-side-btn active" id="preset-side-left" data-side="left">◄ Lijevo</button>
+                        <button class="preset-side-btn" id="preset-side-right" data-side="right">Desno ►</button>
+                     </div>
+                  </div>
+                  <!-- side element counts (hidden for galley) -->
+                  <div class="preset-opt-group" id="preset-counts-wrap">
+                     <div id="preset-left-count-wrap">
+                        <span class="preset-opt-key">Lijeva strana</span>
+                        <input type="number" id="preset-left-count" class="num-input" value="2" min="1" max="6" step="1">
+                     </div>
+                     <div id="preset-right-count-wrap">
+                        <span class="preset-opt-key">Desna strana</span>
+                        <input type="number" id="preset-right-count" class="num-input" value="2" min="1" max="6" step="1">
+                     </div>
+                  </div>
                </div>
-               <div class="field-group" id="preset-width-wrap" style="margin:0;">
-                  <label class="field-label" style="font-size:9px;">GLAVNI ZID (cm)</label>
-                  <input type="number" id="preset-width-main" class="num-input" value="300" step="10" style="width:80px; height:28px; font-size:11px;">
+
+               <!-- interactive layout grid -->
+               <div class="preset-layout-wrap" id="preset-layout-wrap">
+                  <!-- rendered by JS -->
                </div>
-               <div class="field-group" id="preset-l-side-wrap" style="margin:0;">
-                  <label class="field-label" style="font-size:9px;">STRANA (L-oblik)</label>
-                  <select id="preset-l-side" style="height:28px; font-size:11px; background:var(--bg-input); color:var(--text-primary); border:1px solid var(--border); border-radius:4px; padding:0 8px;">
-                     <option value="right">Desno</option>
-                     <option value="left">Lijevo</option>
-                  </select>
+
+               <!-- module picker tooltip (shared) -->
+               <div class="preset-mod-tooltip hidden" id="preset-mod-tooltip">
+                  <div class="preset-mod-tooltip-list" id="preset-mod-tooltip-list"></div>
                </div>
             </div>
-            <div id="presets-grid" style="display:grid; grid-template-columns:repeat(3,1fr); gap:16px;">
-               <!-- populated by JS -->
-            </div>
+
          </div>
-         <div class="modal-footer">
+         <div class="modal-footer" id="preset-footer">
             <button class="btn" id="modal-presets-cancel">Otkaži</button>
+            <button class="btn btn-success" id="preset-add-btn" style="display:none;">＋ Dodaj u plan</button>
          </div>
       </div>
    </div>

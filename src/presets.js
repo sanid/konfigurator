@@ -56,13 +56,16 @@
 /**
  * Build a dynamic plan based on preset type and options.
  * @param {'galley'|'l-shape'|'u-shape'} presetId
- * @param {{ width:number, isGola:boolean, side:'left'|'right' }} options
- *   width = total wall width in cm
- *   isGola = use Gola system (handle-less) variants
- *   side = which side the corner is on (l-shape only)
+ * @param {{ width:number, isGola:boolean, side:'left'|'right', leftCount:number, rightCount:number, slotModules:Object }} options
+ *   width      = total wall width in cm
+ *   isGola     = use Gola system (handle-less) variants
+ *   side       = which side the corner is on (l-shape only)
+ *   leftCount  = number of cabinets on the left side wall (l/u-shape)
+ *   rightCount = number of cabinets on the right side wall (l/u-shape)
+ *   slotModules = { [slotKey]: moduleName } overrides from the interactive grid
  */
 export function buildDynamicPlan(presetId, options) {
-  const { width, isGola, side } = options;
+  const { width, isGola, side, leftCount = 2, rightCount = 2, slotModules = {} } = options;
   const plan = [];
 
   // Height and module suffix for gola vs standard system
@@ -72,34 +75,41 @@ export function buildDynamicPlan(presetId, options) {
   // Corner element geometry parameters
   const dss = isGola ? 100 : 80;  // long arm length (along main wall)
   const lss = isGola ? 80  : 90;  // short arm length (along side wall)
-  const d   = 55;                  // cabinet depth (always 55cm)
   const sw  = 60;                  // standard module width
 
   // Standard module parameter objects
-  const pBase = (s) => ({ s: String(s), v, d: '55', c: '10', brvr: '2', brp: '1', tip_klizaca: 'skriveni' });
-  const pDraw = (s) => ({ s: String(s), v, d: '55', c: '10', brf: '4', brfp: '2', brfd: '1', tip_klizaca: 'skriveni' });
-  const pCorner = () => ({ dss: String(dss), lss: String(lss), v, d: '55', c: '10', brp: '1' });
+  const pBase   = (s) => ({ s: String(s), v, d: '55', c: '10', brvr: '2', brp: '1', tip_klizaca: 'skriveni' });
+  const pDraw   = (s) => ({ s: String(s), v, d: '55', c: '10', brf: '4', brfp: '2', brfd: '1', tip_klizaca: 'skriveni' });
+  const pCorner = ()  => ({ dss: String(dss), lss: String(lss), v, d: '55', c: '10', brp: '1' });
+
+  // Resolve module name for a slot (user override or default)
+  function slotIme(key, defaultIme) { return slotModules[key] || defaultIme; }
+
+  // Make params from a module name (best-effort: fiokar gets drawer params, else base)
+  function pForIme(ime, s) {
+    if (ime.startsWith('fiokar')) return pDraw(s);
+    return pBase(s);
+  }
 
   /**
    * Fill a wall segment with cabinets along the X axis.
-   * Adjusts the middle cabinet width to fill any remainder.
-   * @param {number} startX   - starting posX
-   * @param {number} wallLen  - length to fill (cm)
-   * @param {number} rowIdx   - mat_pos row index (1-based grid row)
-   * @param {number} colStart - mat_pos column start
-   * @returns {number} next posX after last cabinet
+   * Adjusts the last cabinet width to fill any remainder.
+   * slotKeyPrefix used to look up user module overrides.
    */
-  function fillMainWall(startX, wallLen, rowIdx, colStart) {
+  function fillMainWall(startX, wallLen, rowIdx, colStart, slotKeyPrefix = 'main') {
     const count = Math.max(1, Math.floor(wallLen / sw));
-    const remainder = wallLen - (count - 1) * sw;  // last cabinet absorbs remainder
+    const remainder = wallLen - (count - 1) * sw;
     let curX = startX;
     let col = colStart;
     for (let i = 0; i < count; i++) {
       const s = (i === count - 1) ? remainder : sw;
       const isMiddle = (count > 1) && (i === Math.floor(count / 2));
+      const defaultIme = isMiddle ? 'fiokar' + suf : 'radni_stol' + suf;
+      const key = `${slotKeyPrefix}-${i}`;
+      const ime = slotIme(key, defaultIme);
       plan.push({
-        ime: isMiddle ? 'fiokar' + suf : 'radni_stol' + suf,
-        p: isMiddle ? pDraw(s) : pBase(s),
+        ime,
+        p: pForIme(ime, s),
         pos: [curX, 0, 0], r: 0,
         mat_pos: [rowIdx, col++], sirina: s
       });
@@ -110,19 +120,16 @@ export function buildDynamicPlan(presetId, options) {
 
   // ─── GALLEY ────────────────────────────────────────────────────────────────
   if (presetId === 'galley') {
-    fillMainWall(0, width, 2, 1);
+    fillMainWall(0, width, 2, 1, 'main');
 
   // ─── L-SHAPE ───────────────────────────────────────────────────────────────
   } else if (presetId === 'l-shape') {
     if (side === 'right') {
-      // Main wall + right-side corner (desni variant, inner corner at right end)
       // Main wall fills: width - dss (corner long arm takes dss)
       const mainLen = width - dss;
-      const cornerX = fillMainWall(0, mainLen, 2, 1);
+      const cornerX = fillMainWall(0, mainLen, 2, 1, 'main');
 
-      // Right corner (desni): r=0, placed at cornerX, bounding box cornerX → cornerX+dss
-      //   Long arm opens toward -X (main wall direction) ✓
-      //   Short arm at right side: X=(cornerX+dss-d) → (cornerX+dss), Y=0 → -lss
+      // Right corner (desni)
       plan.push({
         ime: 'dug_element_90_desni' + suf,
         p: pCorner(),
@@ -130,26 +137,20 @@ export function buildDynamicPlan(presetId, options) {
         mat_pos: [2, plan.length + 1], sirina: dss
       });
 
-      // Right side wall (back against right wall at X=cornerX+dss, opens leftward = r=90):
-      //   posX = cornerX + dss (back of cabinet flush to right wall)
-      //   Width in +Z: first module starts after corner short arm (posY=-lss)
+      // Right side wall
       const sideX = cornerX + dss;
-      plan.push({
-        ime: 'radni_stol' + suf, p: pBase(sw),
-        pos: [sideX, -lss, 0], r: 90,
-        mat_pos: [3, 1], sirina: sw
-      });
-      plan.push({
-        ime: 'radni_stol' + suf, p: pBase(sw),
-        pos: [sideX, -(lss + sw), 0], r: 90,
-        mat_pos: [3, 2], sirina: sw
-      });
+      for (let i = 0; i < rightCount; i++) {
+        const key = `right-${i}`;
+        const ime = slotIme(key, 'radni_stol' + suf);
+        plan.push({
+          ime, p: pForIme(ime, sw),
+          pos: [sideX, -(lss + i * sw), 0], r: 90,
+          mat_pos: [3, i + 1], sirina: sw
+        });
+      }
 
     } else {
       // side === 'left': corner on the left
-      // Left corner: r=0, inner corner at (0, 0)
-      //   Long arm: Three.X 0 → dss (along main wall)
-      //   Short arm: Three.Z 0 → lss (along left side wall)
       plan.push({
         ime: 'dug_element_90' + suf,
         p: pCorner(),
@@ -157,30 +158,24 @@ export function buildDynamicPlan(presetId, options) {
         mat_pos: [2, 1], sirina: dss
       });
 
-      // Main wall: from X=dss, fills remaining width - dss
-      fillMainWall(dss, width - dss, 2, 2);
+      // Main wall from X=dss
+      fillMainWall(dss, width - dss, 2, 2, 'main');
 
-      // Left side wall (back against left wall at X=0, opens rightward = toward kitchen):
-      //   r=270, posX=0: front at X=+d=55 (opens right ✓)
-      //   Width runs in -Z: posY=-(lss+sw)   → Three.Z runs lss+sw → lss ✓
-      //                     posY=-(lss+2*sw) → Three.Z runs lss+2sw → lss+sw ✓
-      plan.push({
-        ime: 'radni_stol' + suf, p: pBase(sw),
-        pos: [0, -(lss + sw), 0], r: 270,
-        mat_pos: [1, 1], sirina: sw
-      });
-      plan.push({
-        ime: 'radni_stol' + suf, p: pBase(sw),
-        pos: [0, -(lss + 2 * sw), 0], r: 270,
-        mat_pos: [1, 2], sirina: sw
-      });
+      // Left side wall
+      for (let i = 0; i < leftCount; i++) {
+        const key = `left-${i}`;
+        const ime = slotIme(key, 'radni_stol' + suf);
+        plan.push({
+          ime, p: pForIme(ime, sw),
+          pos: [0, -(lss + (i + 1) * sw), 0], r: 270,
+          mat_pos: [1, i + 1], sirina: sw
+        });
+      }
     }
 
   // ─── U-SHAPE ───────────────────────────────────────────────────────────────
   } else if (presetId === 'u-shape') {
-    // Left corner: r=0, inner corner at (0, 0)
-    //   Long arm: Three.X 0 → dss
-    //   Short arm: Three.Z 0 → lss
+    // Left corner
     plan.push({
       ime: 'dug_element_90' + suf,
       p: pCorner(),
@@ -188,22 +183,12 @@ export function buildDynamicPlan(presetId, options) {
       mat_pos: [2, 1], sirina: dss
     });
 
-    // Main wall: from X=dss, fills width - dss - lss
-    //   Right corner at r=90 will have its short arm (-X, length=lss) connect to main wall right end.
-    //   Right corner placed at posX = mainWallEnd + lss (so short arm: lss → 0 = back to mainWallEnd).
-    //   mainWallEnd = dss + mainLen  →  mainLen = width - dss - lss
+    // Main wall: width - dss - lss
     const mainLen = width - dss - lss;
-    const mainEnd = fillMainWall(dss, mainLen, 2, 2);
-    // mainEnd should equal dss + mainLen = width - lss
+    const mainEnd = fillMainWall(dss, mainLen, 2, 2, 'main');
 
-    // Right corner (desni): r=0, placed so right edge = width
-    //   mainEnd = dss + mainLen = width - lss
-    //   Place at posX = mainEnd = width - lss - dss + dss = mainEnd
-    //   Bounding box: mainEnd → mainEnd+dss = width-lss → width-lss+dss
-    //   But we want right edge at width: posX = width - dss
-    //   Short arm at right side (X=width-d … width), runs Y=0 → -lss ✓
-    //   Long arm opens leftward toward main wall ✓
-    const rightCornerX = mainEnd;  // = width - lss
+    // Right corner (desni)
+    const rightCornerX = mainEnd;
     plan.push({
       ime: 'dug_element_90_desni' + suf,
       p: pCorner(),
@@ -211,33 +196,28 @@ export function buildDynamicPlan(presetId, options) {
       mat_pos: [2, plan.length + 1], sirina: dss
     });
 
-    // Left side wall (back at X=0, opens rightward = toward kitchen):
-    //   r=270, posX=0: front at X=+d=55 (opens right ✓)
-    //   Width in -Z: first module posY=-(lss+sw) → Three.Z lss+sw → lss ✓
-    plan.push({
-      ime: 'radni_stol' + suf, p: pBase(sw),
-      pos: [0, -(lss + sw), 0], r: 270,
-      mat_pos: [1, 1], sirina: sw
-    });
-    plan.push({
-      ime: 'radni_stol' + suf, p: pBase(sw),
-      pos: [0, -(lss + 2 * sw), 0], r: 270,
-      mat_pos: [1, 2], sirina: sw
-    });
+    // Left side wall
+    for (let i = 0; i < leftCount; i++) {
+      const key = `left-${i}`;
+      const ime = slotIme(key, 'radni_stol' + suf);
+      plan.push({
+        ime, p: pForIme(ime, sw),
+        pos: [0, -(lss + (i + 1) * sw), 0], r: 270,
+        mat_pos: [1, i + 1], sirina: sw
+      });
+    }
 
-    // Right side wall (back at X=rightCornerX+dss=width, opens leftward = r=90):
-    //   Corner short arm ends at posY=-lss, so side cabinets start there
+    // Right side wall
     const rightWallX = rightCornerX + dss;
-    plan.push({
-      ime: 'radni_stol' + suf, p: pBase(sw),
-      pos: [rightWallX, -lss, 0], r: 90,
-      mat_pos: [3, 1], sirina: sw
-    });
-    plan.push({
-      ime: 'radni_stol' + suf, p: pBase(sw),
-      pos: [rightWallX, -(lss + sw), 0], r: 90,
-      mat_pos: [3, 2], sirina: sw
-    });
+    for (let i = 0; i < rightCount; i++) {
+      const key = `right-${i}`;
+      const ime = slotIme(key, 'radni_stol' + suf);
+      plan.push({
+        ime, p: pForIme(ime, sw),
+        pos: [rightWallX, -(lss + i * sw), 0], r: 90,
+        mat_pos: [3, i + 1], sirina: sw
+      });
+    }
   }
 
   return plan;
