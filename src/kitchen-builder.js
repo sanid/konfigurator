@@ -539,34 +539,40 @@ function build_dug_element_90(p, mats, settings) {
 }
 
 /**
- * dug_element_90_desni — RIGHT-side mirrored L-shaped base corner cabinet.
- * Inner corner is at (dss, 0). Long arm runs from X=0→dss, short arm runs
- * from (dss-d)→dss in X and 0→-lss in Y. The open/door side faces LEFT (-X).
+ * dug_element_90_desni — RIGHT-side corner cabinet, exact X-mirror of dug_element_90.
+ * Shape: long arm X=0..dss depth Y=0..-d, short arm X=(dss-d)..dss depth Y=-d..-lss.
+ * Inner corner is at top-RIGHT (X=dss, Y=-d). Open/door side faces LEFT (low X).
+ *
+ * Mirror rule applied to every panel: tx_R = dss - tx_L - sx  (sx unchanged)
  */
 function build_dug_element_90_desni(p, mats, settings) {
   const { dss, lss, v, d, c, brp = 1 } = p;
   const g = { materials: {} };
   const mK = mats.korpus, mF = mats.front;
+  const frontRailZ = settings.isGola ? v - 6 : v - M1;
 
-  // Mirror helper: for a box of width sx at original tx, mirrored tx = dss - tx - sx
-  const mx = (tx, sx) => dss - tx - sx;
+  // ── Long arm corpus ──────────────────────────────────────────────────────────
+  // original left  panel (tx=0,      sx=M1)  → mirror tx = dss-M1
+  addBox(g, M1, d, v - c, dss - M1, -d, c, mK);
+  // original right panel (tx=dss-M1, sx=M1)  → mirror tx = 0
+  addBox(g, M1, d, v - c, 0,        -d, c, mK);
+  // bottom (symmetric in X)
+  addBox(g, dss - 2 * M1, d, M1, M1, -d, c, mK);
+  // top back rail (symmetric)
+  addBox(g, dss - 2 * M1, 7, M1, M1, -7, v - M1, mK);
+  // top front rail
+  addBox(g, dss - 2 * M1, 7, M1, M1, -d, frontRailZ, mK);
 
-  // Long side corpus (mirrored from original)
-  addBox(g, M1, d, v - c, mx(0, M1), -d, c, mK);          // right side (was left)
-  addBox(g, M1, d, v - c, mx(dss - M1, M1), -d, c, mK);   // left side (was right)
-  addBox(g, dss - 2 * M1, d, M1, M1, -d, c, mK);           // bottom (symmetric)
-  // Top rails long side
-  addBox(g, dss - 2 * M1, 7, M1, M1, -7, v - M1, mK);     // back
-  addBox(g, dss - 2 * M1, 7, M1, M1, -d, settings.isGola ? v - 6 : v - M1, mK); // front
+  // ── Short arm corpus — now at RIGHT end (X = dss-d … dss) ────────────────────
+  // original back   (tx=0,   sx=d)  → mirror tx = dss-d
+  addBox(g, d, M1,          v - c, dss - d, -lss,      c,  mK); // back wall
+  addBox(g, d, lss - d - M1, M1,  dss - d, -lss + M1, c,  mK); // bottom
+  // top-back rail: original (tx=0, sx=7) → mirror tx = dss-7
+  addBox(g, 7, lss - d - M1, M1, dss - 7,     -lss + M1, v - M1,    mK);
+  // top-front rail: original (tx=d-7, sx=7) → mirror tx = dss-(d-7)-7 = dss-d
+  addBox(g, 7, lss - d - M1, M1, dss - d,     -lss + M1, frontRailZ, mK);
 
-  // Short side corpus — at right end (X = dss-d … dss)
-  addBox(g, d, M1, v - c, mx(0, d), -lss, c, mK);              // back of short side
-  addBox(g, d, lss - d - M1, M1, mx(0, d), -lss + M1, c, mK); // bottom short side
-  // Short side top rails
-  addBox(g, 7, lss - d - M1, M1, mx(0, 7), -lss + M1, v - M1, mK);                               // back
-  addBox(g, 7, lss - d - M1, M1, mx(d - 7, 7), -lss + M1, settings.isGola ? v - 6 : v - M1, mK); // front
-
-  // Shelves in long side
+  // ── Shelves ──────────────────────────────────────────────────────────────────
   if (settings.polica && brp > 0) {
     const sp = (v - c - M1) / (brp + 1);
     for (let i = 1; i <= brp; i++) {
@@ -574,30 +580,36 @@ function build_dug_element_90_desni(p, mats, settings) {
     }
   }
 
-  // Back panels
+  // ── Back panels ─────────────────────────────────────────────────────────────
   if (settings.pozadina) {
-    addBox(g, dss, HDF, v - c, 0, 0, c, mK);
-    addBox(g, HDF, lss, v - c, mx(-HDF, HDF), -lss, c, mK);
+    addBox(g, dss, HDF, v - c, 0,   0,    c, mK); // long arm back
+    addBox(g, HDF, lss, v - c, dss, -lss, c, mK); // short arm back (mirror of tx=-HDF → dss)
   }
 
-  // Doors
+  // ── Doors ───────────────────────────────────────────────────────────────────
+  // Original long door:  tx=0.15+d+MDF, sx=ldw  → mirror tx = dss-(0.15+d+MDF)-ldw = 0.15
+  // Original short door: tx=d,          sx=MDF  → mirror tx = dss-d-MDF
   if (settings.front_vrata) {
-    const dh = v - c - 0.3;
-    // Long side door — hangs from X=0 side (open toward -X / left)
+    const dh  = v - c - 0.3;
     const ldw = dss - d - MDF - 0.3;
-    addBox(g, ldw, MDF, dh, mx(dss - 0.15 - MDF, ldw), -d - MDF, c, mF);
-    // Short side door
     const sdw = lss - d - MDF - 0.3;
-    addBox(g, MDF, sdw, dh, mx(d, MDF), -lss + 0.15, c, mF);
-    addCevastaRucka(g, mx(dss - 5, 0), d + MDF, v - 18.6 / 2 - 5);
+    addBox(g, ldw, MDF, dh, 0.15,         -d - MDF,    c, mF); // long door (left side)
+    addBox(g, MDF, sdw, dh, dss - d - MDF, -lss + 0.15, c, mF); // short door (right side face)
+    // Handle: mirror of (dss-5) → 5
+    addCevastaRucka(g, 5, d + MDF, v - 18.6 / 2 - 5);
   }
 
-  // Legs (mirrored from original)
+  // ── Legs ────────────────────────────────────────────────────────────────────
+  // Original legs mirrored: tx_R = dss - tx_L
   const legs = [
-    [mx(3, 0), 5.5], [mx(dss - 3, 0), 5.5],
-    [mx(3, 0), d - 5.5], [mx(dss - 3, 0), d - 5.5],
-    [mx(d - 5.5, 0), lss - 3], [mx(3, 0), lss - 3],
-    [mx(d - 5.5, 0), -3], [mx(d + 5.5, 0), 5.5]
+    [dss - 3,     5.5],
+    [3,           5.5],
+    [dss - 3,     d - 5.5],
+    [3,           d - 5.5],
+    [dss - d + 5.5, lss - 3],
+    [dss - 3,     lss - 3],
+    [dss - d + 5.5, -3],
+    [dss - d - 5.5, 5.5]
   ];
   addLegs(g, dss, c, d, legs);
   return g;
@@ -605,21 +617,21 @@ function build_dug_element_90_desni(p, mats, settings) {
 
 /**
  * dug_element_90_desni_gola — GOLA variant of the right-side corner cabinet.
+ * Same as _desni but doors are 3.3cm shorter (no handle).
  */
 function build_dug_element_90_desni_gola(p, mats, settings) {
   const g = build_dug_element_90_desni(p, mats, { ...settings, front_vrata: false, isGola: true });
-  const { v, d, c, dss = 90, lss = 90 } = p;
+  const { v, d, c } = p;
+  const dss = parseFloat(p.dss) || 90;
+  const lss = parseFloat(p.lss) || 90;
   const mF = mats.front;
 
   if (settings.front_vrata) {
-    const dh = v - c - 3.3;
-    const mx = (tx, sx) => dss - tx - sx;
-
+    const dh  = v - c - 3.3;
     const ldw = dss - d - MDF - 0.3;
-    addBox(g, ldw, MDF, dh, mx(dss - 0.15 - MDF, ldw), -d - MDF, c, mF);
-
     const sdw = lss - d - MDF - 0.3;
-    addBox(g, MDF, sdw, dh, mx(d, MDF), -lss + 0.15, c, mF);
+    addBox(g, ldw, MDF, dh, 0.15,          -d - MDF,    c, mF);
+    addBox(g, MDF, sdw, dh, dss - d - MDF, -lss + 0.15, c, mF);
   }
   return g;
 }
