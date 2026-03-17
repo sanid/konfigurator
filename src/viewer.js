@@ -214,18 +214,19 @@ export function setLayoutWalls(layout, opts = {}) {
 
   if (needLeft) {
     sideWallLeft = makeSideWall(leftDepth);
-    // Plane faces +Z by default. Rotate so it faces +X (toward the room).
+    // Side cabinets (r=270) sit at positive Three.js Z (toward viewer).
+    // Rotate plane so it faces +X (into the room from the left wall).
     sideWallLeft.rotation.y = Math.PI / 2;
-    // Center the plane: X=0 (left wall), Y=wallH/2 (mid height), Z=-leftDepth/2 (into room)
-    sideWallLeft.position.set(0, wallH / 2, -leftDepth / 2);
+    // X=0 (left wall face), Y=half height, Z=+depth/2 (center of depth range 0→depth)
+    sideWallLeft.position.set(0, wallH / 2, leftDepth / 2);
     scene.add(sideWallLeft);
   }
 
   if (needRight) {
     sideWallRight = makeSideWall(rightDepth);
-    // Rotate so it faces -X (toward the room from the right).
+    // Rotate so it faces -X (into the room from the right wall).
     sideWallRight.rotation.y = -Math.PI / 2;
-    sideWallRight.position.set(totalWidth, wallH / 2, -rightDepth / 2);
+    sideWallRight.position.set(totalWidth, wallH / 2, rightDepth / 2);
     scene.add(sideWallRight);
   }
 }
