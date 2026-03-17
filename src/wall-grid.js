@@ -296,6 +296,10 @@ function _buildSections(layout) {
 function _slotsFromItems(itemPairs, matRow, isSideWall = false) {
   // All base cabinets (including side-wall ones) are floor-level → display on rowIdx 2 (Z=0)
   const displayRow = 2;
+  const layout = state.activeLayout || {};
+  const totalWidth = layout.width || 300;
+  const isGola = layout.isGola || false;
+  const lss = isGola ? 80 : 90;
 
   const slots = itemPairs.map(({ item, idx }) => {
     const isCorner = CORNER_NAMES.has(item.ime);
@@ -308,27 +312,47 @@ function _slotsFromItems(itemPairs, matRow, isSideWall = false) {
       isCorner,
       cornerLabel: isCorner ? '⌐' : null,
       posX:        item.pos[0],
+      posY:        item.pos[1],
       planIdx:     idx,
-      isEmpty:     false
+      isEmpty:     false,
+      isSideWall
     };
   });
 
-  // Compute next available matCol and X position for the empty add-slot
+  // Compute next available matCol and position for the empty add-slot
   const lastItem  = itemPairs.length > 0 ? itemPairs[itemPairs.length - 1].item : null;
   const nextCol   = lastItem ? lastItem.mat_pos[1] + 1 : 1;
   const lastWidth = lastItem ? (lastItem.sirina || parseFloat(lastItem.p.s || lastItem.p.dss || 60)) : 0;
-  const nextX     = lastItem ? lastItem.pos[0] + lastWidth : 0;
+
+  let addPosX, addPosY;
+  if (isSideWall) {
+    // Side wall: posX is fixed (0 for left/row1, totalWidth for right/row3)
+    // posY steps negatively: each new cabinet goes further into the room
+    addPosX = matRow === 3 ? totalWidth : 0;
+    if (lastItem) {
+      // next posY = lastItem.pos[1] - lastWidth (more negative = deeper into room)
+      addPosY = lastItem.pos[1] - lastWidth;
+    } else {
+      // No cabinets yet: first side wall cabinet starts just past the corner short arm (lss + 1 module)
+      addPosY = -(lss + 60);
+    }
+  } else {
+    addPosX = lastItem ? lastItem.pos[0] + lastWidth : 0;
+    addPosY = 0;
+  }
 
   slots.push({
-    matCol:     nextCol,
-    matRow:     displayRow,
-    planMatRow: matRow,
-    widthCm:    60,       // default empty slot width
-    isCorner:   false,
+    matCol:      nextCol,
+    matRow:      displayRow,
+    planMatRow:  matRow,
+    widthCm:     60,
+    isCorner:    false,
     cornerLabel: null,
-    posX:       nextX,
-    planIdx:    -1,
-    isEmpty:    true
+    posX:        addPosX,
+    posY:        addPosY,
+    planIdx:     -1,
+    isEmpty:     true,
+    isSideWall
   });
 
   return slots;
@@ -388,13 +412,18 @@ function _addModuleAtSlot(slot, ime) {
 
   const sirina = parseFloat(p.s || p.dss || 60);
   const z = WALL_ROWS.find(r => r.row === slot.matRow)?.z ?? 0;
-  // rotation: side walls use r=270 (left, matRow=1) or r=90 (right, matRow=3), back wall r=0
+  // rotation: side walls use r=270 (left, planMatRow=1) or r=90 (right, planMatRow=3), back wall r=0
   const r = slot.planMatRow === 1 ? 270 : slot.planMatRow === 3 ? 90 : 0;
+
+  // Side wall modules: posX is fixed to wall X (0 or totalWidth), posY steps negatively for depth
+  // Back wall modules: posX steps right, posY=0
+  const posX = slot.isSideWall ? (slot.posX ?? 0) : (slot.posX ?? 0);
+  const posY = slot.isSideWall ? (slot.posY ?? 0) : 0;
 
   const entry = {
     ime,
     p,
-    pos:     [slot.posX ?? 0, 0, z],
+    pos:     [posX, posY, z],
     r,
     mat_pos: [slot.planMatRow, slot.matCol],
     sirina
