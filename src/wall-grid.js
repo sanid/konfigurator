@@ -10,6 +10,17 @@ export const WALL_ROWS = [
 ];
 export const WALL_COLS = 10;
 
+// mat_pos[0] encoding:
+//  Base cabinets:  1=left side, 2=back wall,  3=right side
+//  Upper cabinets (Z=140): 11=left side, 20=back wall, 13=right side
+//  Tall cabinets  (Z=82):  12=left side, 21=back wall, 14=right side
+// Categories allowed per display row index (WALL_ROWS row)
+const ROW_CATEGORIES = {
+  0: ['Gornji'],          // Z=140: upper wall cabinets
+  1: ['Visoki'],          // Z=82:  tall cabinets
+  2: ['Donji', 'Ugaoni']  // Z=0:   base cabinets
+};
+
 // px per cm for proportional cell widths
 const PX_PER_CM = 0.55;
 const CELL_H    = 32; // px height of each row cell
@@ -88,31 +99,28 @@ export function updateWallGridDisplay() {
       rlbl.textContent = rowLabel;
       rowDiv.appendChild(rlbl);
 
-      // Render cells for this section row
-      section.slots.forEach(slot => {
-        // Use planMatRow for the actual plan lookup, matRow for display highlight row
-        const planIdx  = _findPlanIdx(slot.planMatRow, slot.matCol);
-        const item     = planIdx >= 0 ? state.plan[planIdx] : null;
+      // Each row now has its own independent slot list
+      const rowSlots = (section.slotsByRow || {})[rowIdx] || [];
+
+      rowSlots.forEach(slot => {
+        const planIdx    = _findPlanIdx(slot.planMatRow, slot.matCol);
+        const item       = planIdx >= 0 ? state.plan[planIdx] : null;
         const isSelected = planIdx >= 0 && planIdx === state.selectedPlanIdx;
-        const showHere = rowIdx === slot.matRow; // only light up on the display row
 
         const cell = document.createElement('div');
         const widthPx = Math.max(20, Math.round(slot.widthCm * PX_PER_CM));
         cell.style.width  = widthPx + 'px';
         cell.style.height = CELL_H + 'px';
 
-        if (slot.isEmpty && showHere) {
+        if (slot.isEmpty) {
           cell.className = 'wg-cell add-slot';
           cell.textContent = '+';
           cell.title = 'Dodaj modul ovdje';
-        } else if (slot.isEmpty) {
-          cell.className = 'wg-cell empty';
-          cell.textContent = '—';
-        } else if (slot.isCorner && showHere) {
+        } else if (slot.isCorner) {
           cell.className = 'wg-cell corner' + (isSelected ? ' selected' : '');
           cell.textContent = slot.cornerLabel || '⌐';
           cell.title = item ? item.ime.replace(/_/g, ' ') : 'Ugaoni element';
-        } else if (item && showHere) {
+        } else if (item) {
           cell.className = 'wg-cell occupied' + (isSelected ? ' selected' : '');
           cell.textContent = item.ime.substring(0, 3).toUpperCase();
           cell.title = item.ime.replace(/_/g, ' ') + ' (' + slot.widthCm + 'cm)';
@@ -125,17 +133,16 @@ export function updateWallGridDisplay() {
         cell.addEventListener('click', (e) => {
           e.stopPropagation();
           if (slot.isEmpty) {
-            // Empty add-slot: set position and open an add-module tooltip
             state.selectedCell = [slot.planMatRow, slot.matCol];
             _setPos('x', slot.posX ?? 0);
             _setPos('z', WALL_ROWS.find(r => r.row === slot.matRow)?.z ?? 0);
             updateWallGridDisplay();
-            if (showHere) _showAddTooltip(cell, slot);
+            _showAddTooltip(cell, slot);
           } else if (planIdx >= 0) {
             state.selectedPlanIdx = planIdx;
             updateWallGridDisplay();
             import('./plan-manager.js').then(m => m.selectModuleByIndex(planIdx));
-            if (showHere) _showReplaceTooltip(cell, planIdx, slot.isCorner);
+            _showReplaceTooltip(cell, planIdx, slot.isCorner);
           } else {
             state.selectedCell = [slot.planMatRow, slot.matCol];
             _setPos('x', slot.posX ?? 0);
@@ -218,84 +225,143 @@ export function rebuildCountertopsForRow(row) {
   if (changed) import('./plan-manager.js').then(m => m.renderPlanList());
 }
 
+// Helper: gather plan items with a given mat_pos row, sorted by col
+function _itemsForMatRow(matRow) {
+  return state.plan
+    .map((item, idx) => ({ item, idx }))
+    .filter(({ item }) => item.mat_pos && item.mat_pos[0] === matRow)
+    .sort((a, b) => a.item.mat_pos[1] - b.item.mat_pos[1]);
+}
+
 // ── Private: build section descriptors from layout + plan ────────────────────
+// Each section now has slotsByRow: { 0: slots, 1: slots, 2: slots }
 function _buildSections(layout) {
   const { type = 'galley', side = 'left', isGola = false } = layout;
-  const dss = isGola ? 100 : 80;
-  const lss = isGola ? 80  : 90;
 
-  // Gather row=2 (base) items by mat_col order
-  const baseItems = state.plan
-    .map((item, idx) => ({ item, idx }))
-    .filter(({ item }) => item.mat_pos && item.mat_pos[0] === 2)
-    .sort((a, b) => a.item.mat_pos[1] - b.item.mat_pos[1]);
+  // mat_pos row assignments:
+  //   Back wall:  base=2, upper(Z=140)=20, tall(Z=82)=21
+  //   Left side:  base=1, upper=11, tall=12
+  //   Right side: base=3, upper=13, tall=14
 
-  if (type === 'galley' || baseItems.length === 0) {
-    // Single back wall
-    return [{ label: 'Zid', slots: _slotsFromItems(baseItems, 2) }];
+  const base2  = _itemsForMatRow(2);
+  const upper2 = _itemsForMatRow(20);
+  const tall2  = _itemsForMatRow(21);
+
+  if (type === 'galley' || base2.length === 0) {
+    return [{
+      label: 'Zid',
+      slotsByRow: {
+        0: _slotsFromItems(upper2, 20, false, 0),
+        1: _slotsFromItems(tall2,  21, false, 1),
+        2: _slotsFromItems(base2,   2, false, 2)
+      }
+    }];
   }
 
   if (type === 'l-shape') {
     if (side === 'left') {
-      const leftItems = state.plan
-        .map((item, idx) => ({ item, idx }))
-        .filter(({ item }) => item.mat_pos && item.mat_pos[0] === 1)
-        .sort((a, b) => a.item.mat_pos[1] - b.item.mat_pos[1]);
-
-      // Back wall: first item is the corner (dss wide), rest are main
-      const cornerSlot  = baseItems.find(({ item }) => CORNER_NAMES.has(item.ime));
-      const mainSlots   = baseItems.filter(({ item }) => !CORNER_NAMES.has(item.ime));
-
+      const left1  = _itemsForMatRow(1);
+      const left11 = _itemsForMatRow(11);
+      const left12 = _itemsForMatRow(12);
+      const cornerSlot = base2.find(({ item }) => CORNER_NAMES.has(item.ime));
+      const mainSlots  = base2.filter(({ item }) => !CORNER_NAMES.has(item.ime));
       return [
-        { label: 'Lijevna strana', slots: _slotsFromItems(leftItems, 1, true) },
-        { label: 'Zadnji zid',     slots: _slotsFromItems([...(cornerSlot ? [cornerSlot] : []), ...mainSlots], 2) },
+        {
+          label: 'Lijevna strana',
+          slotsByRow: {
+            0: _slotsFromItems(left11, 11, true, 0),
+            1: _slotsFromItems(left12, 12, true, 1),
+            2: _slotsFromItems(left1,   1, true, 2)
+          }
+        },
+        {
+          label: 'Zadnji zid',
+          slotsByRow: {
+            0: _slotsFromItems(upper2, 20, false, 0),
+            1: _slotsFromItems(tall2,  21, false, 1),
+            2: _slotsFromItems([...(cornerSlot ? [cornerSlot] : []), ...mainSlots], 2, false, 2)
+          }
+        }
       ];
     } else {
-      const rightItems = state.plan
-        .map((item, idx) => ({ item, idx }))
-        .filter(({ item }) => item.mat_pos && item.mat_pos[0] === 3)
-        .sort((a, b) => a.item.mat_pos[1] - b.item.mat_pos[1]);
-
-      const cornerSlot  = baseItems.find(({ item }) => CORNER_NAMES.has(item.ime));
-      const mainSlots   = baseItems.filter(({ item }) => !CORNER_NAMES.has(item.ime));
-
+      const right3  = _itemsForMatRow(3);
+      const right13 = _itemsForMatRow(13);
+      const right14 = _itemsForMatRow(14);
+      const cornerSlot = base2.find(({ item }) => CORNER_NAMES.has(item.ime));
+      const mainSlots  = base2.filter(({ item }) => !CORNER_NAMES.has(item.ime));
       return [
-        { label: 'Zadnji zid',    slots: _slotsFromItems([...mainSlots, ...(cornerSlot ? [cornerSlot] : [])], 2) },
-        { label: 'Desna strana',  slots: _slotsFromItems(rightItems, 3, true) },
+        {
+          label: 'Zadnji zid',
+          slotsByRow: {
+            0: _slotsFromItems(upper2, 20, false, 0),
+            1: _slotsFromItems(tall2,  21, false, 1),
+            2: _slotsFromItems([...mainSlots, ...(cornerSlot ? [cornerSlot] : [])], 2, false, 2)
+          }
+        },
+        {
+          label: 'Desna strana',
+          slotsByRow: {
+            0: _slotsFromItems(right13, 13, true, 0),
+            1: _slotsFromItems(right14, 14, true, 1),
+            2: _slotsFromItems(right3,   3, true, 2)
+          }
+        }
       ];
     }
   }
 
   if (type === 'u-shape') {
-    const leftItems = state.plan
-      .map((item, idx) => ({ item, idx }))
-      .filter(({ item }) => item.mat_pos && item.mat_pos[0] === 1)
-      .sort((a, b) => a.item.mat_pos[1] - b.item.mat_pos[1]);
-
-    const rightItems = state.plan
-      .map((item, idx) => ({ item, idx }))
-      .filter(({ item }) => item.mat_pos && item.mat_pos[0] === 3)
-      .sort((a, b) => a.item.mat_pos[1] - b.item.mat_pos[1]);
-
-    const leftCorner  = baseItems.find(({ item }) => item.ime.includes('dug_element_90') && !item.ime.includes('desni'));
-    const rightCorner = baseItems.find(({ item }) => item.ime.includes('dug_element_90_desni'));
-    const mainSlots   = baseItems.filter(({ item }) => !CORNER_NAMES.has(item.ime));
-
+    const left1  = _itemsForMatRow(1);
+    const left11 = _itemsForMatRow(11);
+    const left12 = _itemsForMatRow(12);
+    const right3  = _itemsForMatRow(3);
+    const right13 = _itemsForMatRow(13);
+    const right14 = _itemsForMatRow(14);
+    const leftCorner  = base2.find(({ item }) => item.ime.includes('dug_element_90') && !item.ime.includes('desni'));
+    const rightCorner = base2.find(({ item }) => item.ime.includes('dug_element_90_desni'));
+    const mainSlots   = base2.filter(({ item }) => !CORNER_NAMES.has(item.ime));
     return [
-      { label: 'Lijevna strana', slots: _slotsFromItems(leftItems, 1, true) },
-      { label: 'Zadnji zid',     slots: _slotsFromItems([...(leftCorner ? [leftCorner] : []), ...mainSlots, ...(rightCorner ? [rightCorner] : [])], 2) },
-      { label: 'Desna strana',   slots: _slotsFromItems(rightItems, 3, true) },
+      {
+        label: 'Lijevna strana',
+        slotsByRow: {
+          0: _slotsFromItems(left11, 11, true, 0),
+          1: _slotsFromItems(left12, 12, true, 1),
+          2: _slotsFromItems(left1,   1, true, 2)
+        }
+      },
+      {
+        label: 'Zadnji zid',
+        slotsByRow: {
+          0: _slotsFromItems(upper2, 20, false, 0),
+          1: _slotsFromItems(tall2,  21, false, 1),
+          2: _slotsFromItems([...(leftCorner ? [leftCorner] : []), ...mainSlots, ...(rightCorner ? [rightCorner] : [])], 2, false, 2)
+        }
+      },
+      {
+        label: 'Desna strana',
+        slotsByRow: {
+          0: _slotsFromItems(right13, 13, true, 0),
+          1: _slotsFromItems(right14, 14, true, 1),
+          2: _slotsFromItems(right3,   3, true, 2)
+        }
+      }
     ];
   }
 
-  return [{ label: 'Zid', slots: _slotsFromItems(baseItems, 2) }];
+  return [{
+    label: 'Zid',
+    slotsByRow: {
+      0: _slotsFromItems(upper2, 20, false, 0),
+      1: _slotsFromItems(tall2,  21, false, 1),
+      2: _slotsFromItems(base2,   2, false, 2)
+    }
+  }];
 }
 
 // Build slot descriptors from plan items with a given mat_pos row.
-// displayRow is the WALL_ROWS rowIdx where they should light up (always 2 = Z=0 for base cabinets).
-function _slotsFromItems(itemPairs, matRow, isSideWall = false) {
-  // All base cabinets (including side-wall ones) are floor-level → display on rowIdx 2 (Z=0)
-  const displayRow = 2;
+// displayRowIdx: WALL_ROWS row index (0=Z140, 1=Z82, 2=Z0) — slots light up in this row.
+function _slotsFromItems(itemPairs, matRow, isSideWall = false, displayRowIdx = 2) {
+  const displayRow = displayRowIdx;
   const layout = state.activeLayout || {};
   const totalWidth = layout.width || 300;
   const isGola = layout.isGola || false;
@@ -328,7 +394,7 @@ function _slotsFromItems(itemPairs, matRow, isSideWall = false) {
   if (isSideWall) {
     // Side wall: posX is fixed (0 for left/row1, totalWidth for right/row3)
     // posY steps negatively: each new cabinet goes further into the room
-    addPosX = matRow === 3 ? totalWidth : 0;
+    addPosX = (matRow === 3 || matRow === 13 || matRow === 14) ? totalWidth : 0;
     if (lastItem) {
       // next posY = lastItem.pos[1] - lastWidth (more negative = deeper into room)
       addPosY = lastItem.pos[1] - lastWidth;
@@ -377,8 +443,10 @@ function _showAddTooltip(anchorEl, slot) {
 
   list.innerHTML = '';
 
+  // Filter modules by the categories allowed for this row
+  const allowedCats = ROW_CATEGORIES[slot.matRow] || Object.keys(MODULE_GROUPS);
   const moduleNames = [...new Set(
-    Object.values(MODULE_GROUPS).flatMap(g => Object.keys(g)).filter(n => !CORNER_NAMES.has(n))
+    allowedCats.flatMap(cat => Object.keys(MODULE_GROUPS[cat] || {})).filter(n => !CORNER_NAMES.has(n))
   )];
 
   moduleNames.forEach(name => {
@@ -410,14 +478,16 @@ function _addModuleAtSlot(slot, ime) {
   const p = Object.fromEntries((MODULE_GROUPS[category][ime] || []).map(([k, v]) => [k, v]));
   p.tip_klizaca = 'skriveni';
 
-  const sirina = parseFloat(p.s || p.dss || 60);
+  const sirina = parseFloat(p.s || p.sl || p.dss || 60);
   const z = WALL_ROWS.find(r => r.row === slot.matRow)?.z ?? 0;
-  // rotation: side walls use r=270 (left, planMatRow=1) or r=90 (right, planMatRow=3), back wall r=0
-  const r = slot.planMatRow === 1 ? 270 : slot.planMatRow === 3 ? 90 : 0;
+  // rotation: left side wall = r=270 (planMatRow 1/11/12), right side wall = r=90 (planMatRow 3/13/14), back wall = r=0
+  const isLeft  = slot.planMatRow === 1 || slot.planMatRow === 11 || slot.planMatRow === 12;
+  const isRight = slot.planMatRow === 3 || slot.planMatRow === 13 || slot.planMatRow === 14;
+  const r = isLeft ? 270 : isRight ? 90 : 0;
 
   // Side wall modules: posX is fixed to wall X (0 or totalWidth), posY steps negatively for depth
   // Back wall modules: posX steps right, posY=0
-  const posX = slot.isSideWall ? (slot.posX ?? 0) : (slot.posX ?? 0);
+  const posX = slot.posX ?? 0;
   const posY = slot.isSideWall ? (slot.posY ?? 0) : 0;
 
   const entry = {
