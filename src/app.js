@@ -6,12 +6,12 @@ import { MODULE_GROUPS, DEFAULT_MATERIALS, DEFAULT_SETTINGS, COLOR_PRESETS, TEXT
 import { buildKitchenModule, clearGeomCache } from './kitchen-builder.js';
 import { buildDynamicPlan, validatePresetPlan, PRESET_LAYOUTS } from './presets.js';
 import { t, setLocale } from './i18n.js';
-import { initViewer, addModuleGroup, removeModuleGroup, shiftModuleGroups, moveModuleGroup, clearAllGroups, setCameraView, resetCamera, highlightModule, resizeViewer, setViewerTheme, addFixtureMarker, removeFixtureMarker, clearFixtureMarkers, setLightingMode, getModuleIndexAt, getModuleSnapInfoAt, getModuleGroup, showMeasurements, clearMeasurements } from './viewer.js';
+import { initViewer, addModuleGroup, removeModuleGroup, shiftModuleGroups, moveModuleGroup, clearAllGroups, setCameraView, resetCamera, highlightModule, resizeViewer, setViewerTheme, setLayoutWalls, addFixtureMarker, removeFixtureMarker, clearFixtureMarkers, setLightingMode, getModuleIndexAt, getModuleSnapInfoAt, getModuleGroup, showMeasurements, clearMeasurements } from './viewer.js';
 
 import { state, isDark, setIsDark, editingPlanIdx, setEditingPlanIdx, pushHistory, _history, _clonePlanState } from './state.js';
 import { showNotification } from './notifications.js';
 import { initPriceInputs, updateTotalCost, calcKant, getPriceForMaterial } from './price-utils.js';
-import { initWallGrid, selectCell, updateWallGridDisplay, shiftRowFrom, rebuildCountertopsForRow, WALL_ROWS, WALL_COLS } from './wall-grid.js';
+import { initWallGrid, selectCell, updateWallGridDisplay, shiftRowFrom, rebuildCountertopsForRow, WALL_ROWS, WALL_COLS, openReplaceTooltip } from './wall-grid.js';
 import { initMaterialsPanel, refreshMaterialSwatches, initMaterialPickerModal, openMaterialPicker, MAT_LABELS } from './material-picker.js';
 import { autoSave, autoRestore, saveProject, loadProject } from './project-storage.js';
 import { setSnapAnchorByIndex, snapModuleToSide } from './snap.js';
@@ -321,6 +321,17 @@ function hideCtxMenu() {
 function initContextMenu() {
   const menu = document.getElementById('ctx-menu');
   if (!menu) return;
+
+  document.getElementById('ctx-replace')?.addEventListener('click', (e) => {
+    if (ctxTargetIdx < 0) { hideCtxMenu(); return; }
+    const idx = ctxTargetIdx;
+    hideCtxMenu();
+    // Delegate to wall-grid's replace tooltip, anchored at the menu position
+    const fakeAnchor = { getBoundingClientRect: () => ({ bottom: parseInt(menu.style.top) || 100, top: parseInt(menu.style.top) || 100, left: parseInt(menu.style.left) || 100, right: parseInt(menu.style.left) + 170 || 270 }) };
+    openReplaceTooltip(fakeAnchor, idx);
+    e.stopPropagation();
+  });
+
   document.getElementById('ctx-mirror')?.addEventListener('click', () => { if (ctxTargetIdx >= 0) mirrorModule(ctxTargetIdx); hideCtxMenu(); });
   document.getElementById('ctx-duplicate')?.addEventListener('click', () => { if (ctxTargetIdx >= 0) duplicateModule(ctxTargetIdx); hideCtxMenu(); });
   document.getElementById('ctx-anchor')?.addEventListener('click', () => {
@@ -780,7 +791,7 @@ function initPresetModal() {
   // ── apply preset ───────────────────────────────────────────────────────────
   function applyAndClose() {
     const opts = getOpts();
-    const { isGola, leftCount, rightCount } = opts;
+    const { isGola, leftCount, rightCount, width, side } = opts;
     const suf = isGola ? '_gola' : '';
 
     // Build the dynamic plan using current options
@@ -800,6 +811,21 @@ function initPresetModal() {
     updateWallGridDisplay();
     renderPlanList();
     updateTotalCost();
+
+    // Save layout config in state for wall grid display
+    state.activeLayout = { type: activePresetId, side, width, leftCount, rightCount, isGola };
+
+    // Update side walls in the viewer
+    const lss = isGola ? 80 : 90;
+    const sw  = 60;
+    setLayoutWalls(activePresetId, {
+      side,
+      leftDepth:  lss + leftCount  * sw,
+      rightDepth: lss + rightCount * sw,
+      totalWidth: width,
+      isDark
+    });
+
     showNotification('Predlozak primijenjen', 'success');
     closeModal();
   }
@@ -1209,7 +1235,7 @@ function initPlanActions() {
 
   document.getElementById('btn-save-project')?.addEventListener('click', saveProject);
   document.getElementById('btn-load-project')?.addEventListener('click', loadProject);
-  document.getElementById('btn-clear-plan')?.addEventListener('click', clearPlan);
+  document.getElementById('btn-clear-plan')?.addEventListener('click', () => { clearPlan(); setLayoutWalls('galley'); });
 }
 
 function historyUndo() {

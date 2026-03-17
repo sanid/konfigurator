@@ -891,66 +891,175 @@ body.light .pin-label:hover {
   color: var(--text-dim);
 }
 
+/* ── Multi-wall grid layout ────────────────────────────── */
 .wall-grid-wrap {
-  display: grid;
-  grid-template-rows: repeat(3, auto);
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  overflow-x: auto;
+  max-width: 100%;
+  padding-bottom: 2px;
+}
+
+/* One section = one wall face (back / left / right) */
+.wg-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.wg-section-label {
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  text-align: center;
+  padding: 0 2px 2px;
+  opacity: 0.8;
+}
+
+/* Thin vertical divider between sections */
+.wg-separator {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border-light);
+  margin: 0 2px;
+  flex-shrink: 0;
+}
+
+/* Matrix = all 3 rows for one wall section */
+.wg-matrix {
+  display: flex;
+  flex-direction: column;
   gap: 3px;
 }
 
-.wall-row {
+.wg-row {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
 }
 
-.wall-row-label {
-  width: 40px;
-  font-size: 9px;
+.wg-row-label {
+  width: 36px;
+  font-size: 8px;
   color: var(--text-dim);
   text-align: right;
   padding-right: 4px;
   flex-shrink: 0;
 }
 
-.wall-cell {
-  width: 36px;
-  height: 32px;
+/* Individual cells — width set inline via JS (proportional to cm) */
+.wg-cell {
   border: 1px solid var(--border-light);
-  border-radius: 4px;
+  border-radius: 3px;
   background: var(--bg-card);
   color: var(--text-dim);
   cursor: pointer;
-  font-size: 9px;
+  font-size: 8px;
+  font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.15s;
+  transition: border-color 0.12s, background 0.12s;
   overflow: hidden;
+  user-select: none;
+  flex-shrink: 0;
 }
 
-.wall-cell:hover {
+.wg-cell:hover {
   border-color: var(--accent);
   background: var(--bg-hover);
   color: var(--text-primary);
 }
 
-.wall-cell.selected {
+.wg-cell.selected {
   border-color: var(--accent);
-  background: rgba(79, 122, 255, 0.25);
+  background: rgba(79, 122, 255, 0.22);
   color: var(--accent);
 }
 
-.wall-cell.occupied {
+.wg-cell.occupied {
   background: var(--green-dark);
   border-color: var(--green);
   color: #fff;
-  font-size: 8px;
+  font-size: 7px;
 }
 
-.wall-cell.occupied.selected {
+.wg-cell.occupied.selected {
   border-color: var(--accent);
-  background: var(--green-dark);
+  outline: 1px solid var(--accent);
 }
+
+.wg-cell.corner {
+  background: color-mix(in srgb, var(--accent) 18%, var(--bg-card));
+  border-color: var(--accent);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.wg-cell.corner:hover {
+  background: color-mix(in srgb, var(--accent) 30%, var(--bg-card));
+}
+
+.wg-cell.corner.selected {
+  outline: 1px solid var(--accent);
+}
+
+.wg-cell.empty {
+  opacity: 0.4;
+}
+
+/* ── Wall grid replace tooltip ─────────────────────────── */
+.wg-tooltip {
+  position: fixed;
+  z-index: 9500;
+  background: var(--bg-card2);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+  min-width: 160px;
+  max-width: 210px;
+  padding: 4px 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.wg-tooltip.hidden { display: none; }
+.wg-tooltip-list { display: flex; flex-direction: column; }
+.wg-tooltip-item {
+  padding: 6px 12px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text-primary);
+  white-space: nowrap;
+  transition: background 0.1s;
+}
+.wg-tooltip-item:hover { background: var(--bg-hover); color: var(--accent); }
+.wg-tooltip-item.selected {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+/* ── Legacy wall-cell kept for compatibility ───────────── */
+.wall-row { display: flex; align-items: center; gap: 3px; }
+.wall-row-label { width: 40px; font-size: 9px; color: var(--text-dim); text-align: right; padding-right: 4px; flex-shrink: 0; }
+.wall-cell {
+  width: 36px; height: 32px;
+  border: 1px solid var(--border-light); border-radius: 4px;
+  background: var(--bg-card); color: var(--text-dim);
+  cursor: pointer; font-size: 9px;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s; overflow: hidden;
+}
+.wall-cell:hover { border-color: var(--accent); background: var(--bg-hover); color: var(--text-primary); }
+.wall-cell.selected { border-color: var(--accent); background: rgba(79,122,255,0.25); color: var(--accent); }
+.wall-cell.occupied { background: var(--green-dark); border-color: var(--green); color: #fff; font-size: 8px; }
+.wall-cell.occupied.selected { border-color: var(--accent); background: var(--green-dark); }
 
 /* ── Fixture list (inside modal) ───────────────────────── */
 .fixture-list-row {

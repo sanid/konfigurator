@@ -22,7 +22,9 @@ export let state = {
   addingRadnaPloca: false,
   addingCokla: false,
   lightingMode: 'warm',
-  showMeasurements: true
+  showMeasurements: true,
+  // Active layout config — set when a preset is applied
+  activeLayout: { type: 'galley', side: 'left', width: 300, leftCount: 2, rightCount: 2, isGola: false }
 };
 
 export let editingPlanIdx = -1;

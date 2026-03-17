@@ -11,6 +11,7 @@ import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer
 let scene, camera, renderer, labelRenderer, controls, animId;
 let ambientLight, keyLight, fillLight;
 let gridHelper, floorMesh, wallMesh;
+let sideWallLeft = null, sideWallRight = null;
 
 // Fixture marker groups keyed by fixture index
 const fixtureMarkers = new Map();
@@ -156,6 +157,8 @@ export function setViewerTheme(theme) {
     scene.fog = new THREE.Fog(0xdfe0f0, 600, 2000);
     if (floorMesh) floorMesh.material.color.set(0xd0d0e8);
     if (wallMesh) wallMesh.material.color.set(0xe8e8f4);
+    if (sideWallLeft) sideWallLeft.material.color.set(0xe8e8f4);
+    if (sideWallRight) sideWallRight.material.color.set(0xe8e8f4);
     if (gridHelper) {
       gridHelper.material.color?.set(0xb0b0cc);
       gridHelper.material.opacity = 0.6;
@@ -170,6 +173,8 @@ export function setViewerTheme(theme) {
     scene.fog = new THREE.Fog(0x0a0a14, 600, 2000);
     if (floorMesh) floorMesh.material.color.set(0x0d0d20);
     if (wallMesh) wallMesh.material.color.set(0x0f0f22);
+    if (sideWallLeft) sideWallLeft.material.color.set(0x0f0f22);
+    if (sideWallRight) sideWallRight.material.color.set(0x0f0f22);
     if (gridHelper) {
       gridHelper.material.color?.set(0x1a1a3a);
       gridHelper.material.opacity = 1.0;
@@ -179,6 +184,49 @@ export function setViewerTheme(theme) {
       if (obj.isAmbientLight) obj.intensity = 0.6;
       if (obj.isDirectionalLight && obj.position.z > 0) obj.intensity = 1.8;
     });
+  }
+}
+
+/**
+ * setLayoutWalls — add or remove side walls based on the active layout.
+ * @param {'galley'|'l-shape'|'u-shape'} layout
+ * @param {{ side?:'left'|'right', leftDepth:number, rightDepth:number, totalWidth:number, isDark:boolean }} opts
+ */
+export function setLayoutWalls(layout, opts = {}) {
+  const { side = 'left', leftDepth = 150, rightDepth = 150, totalWidth = 300, isDark = true } = opts;
+  const wallColor = isDark ? 0x0f0f22 : 0xe8e8f4;
+  const wallH = 1200;
+
+  function makeSideWall(depth) {
+    const geo = new THREE.PlaneGeometry(depth, wallH);
+    const mat = new THREE.MeshStandardMaterial({ color: wallColor, roughness: 1.0 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.receiveShadow = true;
+    return mesh;
+  }
+
+  // Remove existing side walls
+  if (sideWallLeft) { scene.remove(sideWallLeft); sideWallLeft.geometry.dispose(); sideWallLeft.material.dispose(); sideWallLeft = null; }
+  if (sideWallRight) { scene.remove(sideWallRight); sideWallRight.geometry.dispose(); sideWallRight.material.dispose(); sideWallRight = null; }
+
+  const needLeft  = layout === 'u-shape' || (layout === 'l-shape' && side === 'left');
+  const needRight = layout === 'u-shape' || (layout === 'l-shape' && side === 'right');
+
+  if (needLeft) {
+    sideWallLeft = makeSideWall(leftDepth);
+    // Plane faces +Z by default. Rotate so it faces +X (toward the room).
+    sideWallLeft.rotation.y = Math.PI / 2;
+    // Center the plane: X=0 (left wall), Y=wallH/2 (mid height), Z=-leftDepth/2 (into room)
+    sideWallLeft.position.set(0, wallH / 2, -leftDepth / 2);
+    scene.add(sideWallLeft);
+  }
+
+  if (needRight) {
+    sideWallRight = makeSideWall(rightDepth);
+    // Rotate so it faces -X (toward the room from the right).
+    sideWallRight.rotation.y = -Math.PI / 2;
+    sideWallRight.position.set(totalWidth, wallH / 2, -rightDepth / 2);
+    scene.add(sideWallRight);
   }
 }
 
