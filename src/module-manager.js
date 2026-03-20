@@ -185,12 +185,14 @@ function _renderEditor(moduleName) {
       });
       rowEl.querySelector('.mm-bom-col-qty').addEventListener('input', e => {
         def.bom[i].qty = parseFloat(e.target.value) || 0;
-        renderBomRows();
+        const rowTotal = def.bom[i].qty * (parseFloat(def.bom[i].unitCost) || 0);
+        rowEl.querySelector('.mm-row-total').textContent = rowTotal.toFixed(2) + ' €';
         _updateBomTotal();
       });
       rowEl.querySelector('.mm-bom-col-cost').addEventListener('input', e => {
         def.bom[i].unitCost = parseFloat(e.target.value) || 0;
-        renderBomRows();
+        const rowTotal = (parseFloat(def.bom[i].qty) || 0) * def.bom[i].unitCost;
+        rowEl.querySelector('.mm-row-total').textContent = rowTotal.toFixed(2) + ' €';
         _updateBomTotal();
       });
       rowEl.querySelector('.mm-del-btn').addEventListener('click', () => {
@@ -252,10 +254,12 @@ function _updateBomTotal() {
   if (!_selectedModule) return;
   const def = state.moduleDefs?.[_selectedModule];
   if (!def) return;
+  const bomTotal = def.bom.reduce((s, r) => s + (parseFloat(r.qty) || 0) * (parseFloat(r.unitCost) || 0), 0);
+  const totalVal = document.querySelector('.mm-bom-total-row .mm-total-val');
+  if (totalVal) totalVal.textContent = bomTotal.toFixed(2) + ' €';
   const usageCount = state.plan.filter(item => item.ime === _selectedModule).length;
   const usage = document.getElementById('mm-usage-line');
   if (usage && usageCount > 0) {
-    const bomTotal = def.bom.reduce((s, r) => s + (parseFloat(r.qty) || 0) * (parseFloat(r.unitCost) || 0), 0);
     usage.innerHTML = `
       <span>Koristi se u planu: <strong>${usageCount}×</strong></span>
       <span>BOM ukupno: <strong>${(bomTotal * usageCount).toFixed(2)} €</strong></span>

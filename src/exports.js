@@ -2,6 +2,7 @@ import { state, isDark } from './state.js';
 import { computeCuttingList, computeCuttingListByModule, toCsvString } from './cutting-list.js';
 import { showNotification } from './notifications.js';
 import { calcKant, getPriceForMaterial } from './price-utils.js';
+import { snapshotCanvasFitAll } from './viewer.js';
 
 // ─── Krojna Lista Modal ───────────────────────────────────────────────────────
 export function initKrojnaModal() {
@@ -168,52 +169,83 @@ export async function exportPdf() {
 
     const list = computeCuttingList(state.plan);
     const name = state.clientName.replace(/\s+/g, '_');
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'A4' });
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'A4' });
 
-    doc.setFillColor(...C.pageBg); doc.rect(0,0,297,297,'F');
-    doc.setTextColor(...C.titleText); doc.setFontSize(18);
-    doc.text(`MECO KONFIGURATOR — ${name.toUpperCase()}`, 15, 20);
-    doc.setFontSize(10); doc.setTextColor(...C.subText);
-    doc.text('Krojna Lista — ' + new Date().toLocaleDateString('bs-BA'), 15, 28);
+    // ── Page 1: full-bleed 3D render with overlays ─────────────────────────────
+    const imgData = snapshotCanvasFitAll('image/jpeg', 0.92);
+    if (imgData) {
+      doc.addImage(imgData, 'JPEG', 0, 0, 210, 297); // full A4 portrait
+    } else {
+      doc.setFillColor(...C.pageBg); doc.rect(0, 0, 210, 297, 'F');
+    }
 
-    const canvas = document.getElementById('three-canvas');
-    doc.addImage(canvas.toDataURL('image/jpeg', 0.8), 'JPEG', 15, 35, 120, 70);
+    // Header bar overlay (top strip)
+    const headerH = 32;
+    doc.setGState(new doc.GState({ opacity: 0.82 }));
+    doc.setFillColor(isDark ? 10 : 240, isDark ? 10 : 240, isDark ? 20 : 252);
+    doc.rect(0, 0, 210, headerH, 'F');
+    doc.setGState(new doc.GState({ opacity: 1 }));
 
-    doc.setFontSize(11); doc.setTextColor(...C.sectionText); doc.text('PLAN KUHINJE:', 145, 40);
-    doc.setTextColor(...C.rowText); doc.setFontSize(9);
-    state.plan.forEach((item, i) => { if (i < 15) doc.text((i+1) + '. ' + item.ime, 145, 48 + i*6); });
+    doc.setTextColor(...C.titleText); doc.setFontSize(15);
+    doc.text(`MECO KONFIGURATOR — ${name.toUpperCase()}`, 12, 14);
+    doc.setFontSize(9); doc.setTextColor(...C.subText);
+    doc.text('Krojna Lista — ' + new Date().toLocaleDateString('bs-BA'), 12, 24);
 
-    doc.addPage(); doc.setFillColor(...C.pageBg); doc.rect(0,0,297,210,'F');
+    // Plan list panel overlay (bottom strip) — compact height
+    const panelH = 10 + Math.ceil(state.plan.length / 3) * 7 + 8;
+    const panelX = 0, panelY = 297 - panelH, panelW = 210;
+    doc.setGState(new doc.GState({ opacity: 0.82 }));
+    doc.setFillColor(isDark ? 10 : 240, isDark ? 10 : 240, isDark ? 20 : 252);
+    doc.rect(panelX, panelY, panelW, panelH, 'F');
+    doc.setGState(new doc.GState({ opacity: 1 }));
+
+    doc.setFontSize(9); doc.setTextColor(...C.sectionText);
+    doc.text('PLAN KUHINJE:', panelX + 10, panelY + 8);
+    doc.setTextColor(...C.rowText); doc.setFontSize(8);
+    const cols = 3, rowH = 7;
+    state.plan.forEach((item, i) => {
+      const col = i % cols, row = Math.floor(i / cols);
+      doc.text((i + 1) + '. ' + item.ime.replace(/_/g, ' '), panelX + 10 + col * 66, panelY + 15 + row * rowH);
+    });
+
+    doc.addPage(); doc.setFillColor(...C.pageBg); doc.rect(0, 0, 210, 297, 'F');
 
     const groups = {};
     list.forEach(r => { if (!groups[r.material]) groups[r.material]=[]; groups[r.material].push(r); });
     let startY = 20;
 
     for (const [mat, rows] of Object.entries(groups)) {
-      doc.setFontSize(11); doc.setTextColor(...C.sectionText); doc.text('▸ ' + mat, 15, startY); startY += 5;
+      // Ensure room for at least the header + one row before starting a new group
+      if (startY + 20 > 272) { doc.addPage(); startY = 20; }
+
+      const matHeaderY = startY; // capture for willDrawPage closure
       doc.autoTable({
-        startY,
-        head: [['Naziv','Dimenzije','Kom.','m²','Mat (€)','Kant (€)','Ukupno (€)','Code']],
-        body: rows.map(r => {
-          const area = (r.L*r.W)/1000000*r.qty;
-          const k = calcKant(r.kant, r.L, r.W);
-          const costKant = (k.k*state.prices.kant_k + k.K*state.prices.kant_K)*r.qty;
-          const costMat = area*getPriceForMaterial(mat);
-          return [r.name, r.L+'x'+r.W, r.qty, area.toFixed(2), costMat.toFixed(2), costKant.toFixed(2), (costMat+costKant).toFixed(2)+' €', r.kant||''];
-        }),
+        startY: matHeaderY + 7, // leave space above for the section header
+        head: [['Naziv', 'Dimenzije', 'Kom.', 'Code']],
+        body: rows.map(r => [r.name, r.L + 'x' + r.W, r.qty, r.kant || '']),
+        columnStyles: { 0: { cellWidth: 90 }, 1: { cellWidth: 38 }, 2: { cellWidth: 18 }, 3: { cellWidth: 34 } },
         styles: { fontSize:8, cellPadding:2, fillColor:C.rowFill, textColor:C.rowText, lineColor:C.rowLine, lineWidth:0.1 },
         headStyles: { fillColor:C.headFill, textColor:C.headText, fontStyle:'bold' },
         alternateRowStyles: { fillColor:C.altFill },
         margin: { left:15, right:15 },
-        willDrawPage: () => { doc.setFillColor(...C.pageBg); doc.rect(0,0,297,210,'F'); }
+        willDrawPage: (data) => {
+          // Fill page background first
+          doc.setFillColor(...C.pageBg); doc.rect(0, 0, 210, 297, 'F');
+          // Draw section header on top — only on the first page of this group
+          if (data.pageNumber === 1) {
+            doc.setFontSize(11); doc.setTextColor(...C.sectionText);
+            doc.text('▸ ' + mat, 15, matHeaderY + 5);
+          }
+        }
       });
-      startY = doc.lastAutoTable.finalY + 10;
+
+      startY = doc.lastAutoTable.finalY + 8;
       const matArea = rows.reduce((s,r)=>s+(r.L*r.W/1000000*r.qty),0);
       const matKantCost = rows.reduce((s,r)=>{ const k=calcKant(r.kant,r.L,r.W); return s+(k.k*state.prices.kant_k+k.K*state.prices.kant_K)*r.qty; },0);
       const matCost = (matArea*getPriceForMaterial(mat))+matKantCost;
       doc.setFontSize(9); doc.setTextColor(...C.subtotalText);
-      doc.text('Ukupno za ' + mat + ': ' + matArea.toFixed(2) + ' m2 = ' + matCost.toFixed(2) + ' € (' + (matCost*117).toLocaleString('sr-RS') + ' RSD)', 15, startY-5);
-      if (startY > 260) { doc.addPage(); doc.setFillColor(...C.pageBg); doc.rect(0,0,297,210,'F'); startY=20; }
+      doc.text('Ukupno za ' + mat + ': ' + matCost.toFixed(2) + ' € (' + (matCost*117).toLocaleString('sr-RS') + ' RSD)', 15, startY);
+      startY += 10;
     }
 
     const grandMat = list.reduce((s,r)=>s+(r.L*r.W/1000000*r.qty*getPriceForMaterial(r.material)),0);

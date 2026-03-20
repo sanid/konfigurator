@@ -40,7 +40,8 @@ export function initViewer(canvas) {
   renderer = new THREE.WebGLRenderer({
     canvas,
     antialias: true,
-    powerPreference: 'high-performance'
+    powerPreference: 'high-performance',
+    preserveDrawingBuffer: true
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(w, h, false);
@@ -638,4 +639,69 @@ export function showMeasurements(index, { s, v, d }) {
 export function clearMeasurements() {
   activeLabels.forEach(l => scene.remove(l));
   activeLabels = [];
+}
+
+/**
+ * snapshotCanvas — force a render and return the canvas data URL.
+ * Use this instead of canvas.toDataURL() directly, because WebGL
+ * clears the drawing buffer after compositing each frame.
+ */
+export function snapshotCanvas(type = 'image/jpeg', quality = 0.92) {
+  if (!renderer || !scene || !camera) return null;
+  renderer.render(scene, camera);
+  return renderer.domElement.toDataURL(type, quality);
+}
+
+/**
+ * snapshotCanvasFitAll — renders the scene with a true isometric orthographic
+ * camera that automatically frames all modules, then restores the original state.
+ */
+export function snapshotCanvasFitAll(type = 'image/jpeg', quality = 0.92) {
+  if (!renderer || !scene || !camera || !controls) return null;
+
+  // Compute bounding box of all module groups
+  const box = new THREE.Box3();
+  for (const [, group] of moduleGroups) {
+    box.expandByObject(group);
+  }
+
+  // Bounding sphere gives a radius that encloses everything
+  const sphere = new THREE.Sphere();
+  if (!box.isEmpty()) {
+    box.getBoundingSphere(sphere);
+  } else {
+    sphere.center.set(150, 90, 0);
+    sphere.radius = 400;
+  }
+
+  const { center, radius } = sphere;
+  const canvas = renderer.domElement;
+  const aspect = canvas.width / canvas.height;
+
+  // Isometric direction: classic (1, 1, 1) normalised → 45° azimuth, ~35° elevation
+  const isoDir = new THREE.Vector3(1, 1, 1).normalize();
+  const dist = radius * 3;
+
+  // True orthographic camera — no perspective distortion
+  const pad = radius * 1.15; // slight padding so nothing clips the edge
+  const ortho = new THREE.OrthographicCamera(
+    -pad * aspect,  pad * aspect,   // left / right
+     pad,          -pad,            // top / bottom
+     0.1,           dist * 4        // near / far
+  );
+  ortho.position.set(
+    center.x + isoDir.x * dist,
+    center.y + isoDir.y * dist,
+    center.z + isoDir.z * dist
+  );
+  ortho.lookAt(center);
+  ortho.updateProjectionMatrix();
+
+  renderer.render(scene, ortho);
+  const dataURL = renderer.domElement.toDataURL(type, quality);
+
+  // Restore original perspective camera frame
+  renderer.render(scene, camera);
+
+  return dataURL;
 }
