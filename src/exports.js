@@ -4,6 +4,9 @@ import { showNotification } from './notifications.js';
 import { calcKant, getPriceForMaterial, computeCostBreakdown } from './price-utils.js';
 import { computeHardwareBOM } from './hardware.js';
 import { TEXTURE_PRESETS, COLOR_PRESETS } from './modules-config.js';
+import { electronAPI } from './tauri-bridge.js';
+import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
 
 // ─── Krojna Lista Modal ───────────────────────────────────────────────────────
 export function initKrojnaModal() {
@@ -172,7 +175,7 @@ export async function exportOptimik() {
   const list = computeCuttingList(state.plan);
   const csv = toCsvString(list);
   const name = state.clientName.replace(/\s+/g, '_');
-  const res = await window.electronAPI?.saveFile({
+  const res = await electronAPI?.saveFile({
     filename: `Optimik_${name}.csv`,
     ext: 'csv',
     extName: 'CSV',
@@ -188,7 +191,6 @@ export async function exportPdf() {
     return;
   }
   try {
-    const { jsPDF } = window.jspdf;
     const C = isDark
       ? {
           pageBg: [13, 13, 23],
@@ -346,7 +348,7 @@ export async function exportPdf() {
     const uint8 = new Uint8Array(pdfData);
     let binary = '';
     uint8.forEach((b) => (binary += String.fromCharCode(b)));
-    const res = await window.electronAPI?.saveFile({
+    const res = await electronAPI?.saveFile({
       filename: 'Ponuda_' + name + '.pdf',
       ext: 'pdf',
       extName: 'PDF',
@@ -747,7 +749,7 @@ export async function exportModuleMPR(planIdx) {
   const content = generateMPRContent(panel.L, panel.W, settings);
   const safeName = m.moduleName.replace(/[^a-zA-Z0-9_]/g, '_');
   const filename = `${m.index}_${safeName}_${panel.L}x${panel.W}.mpr`;
-  const res = await window.electronAPI?.saveFile({
+  const res = await electronAPI?.saveFile({
     filename,
     ext: 'mpr',
     extName: 'MPR CNC',
@@ -776,7 +778,7 @@ export async function exportAllMPR() {
     showNotification('Nema MPR fajlova za eksport!', 'warning');
     return;
   }
-  const res = await window.electronAPI?.saveFilesToFolder({ files });
+  const res = await electronAPI?.saveFilesToFolder({ files });
   if (res?.success) showNotification(res.count + ' MPR fajlova sacuvano u ' + res.folder, 'success');
 }
 
@@ -787,7 +789,6 @@ export async function exportClientPdf() {
     return;
   }
   try {
-    const { jsPDF } = window.jspdf;
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'A4' });
     const W = 210,
       H = 297;
@@ -971,7 +972,7 @@ export async function exportClientPdf() {
     const uint8 = new Uint8Array(pdfData);
     let binary = '';
     uint8.forEach((b) => (binary += String.fromCharCode(b)));
-    const res = await window.electronAPI?.saveFile({
+    const res = await electronAPI?.saveFile({
       filename: `Ponuda_${name}.pdf`,
       ext: 'pdf',
       extName: 'PDF',

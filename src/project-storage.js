@@ -8,6 +8,7 @@ import { renderPlanList } from './plan-manager.js';
 import { updateTotalCost } from './price-utils.js';
 import { initMaterialsPanel } from './material-picker.js';
 import { saveCurrentTab } from './plan-tabs.js';
+import { electronAPI } from './tauri-bridge.js';
 
 let _initToggles = () => {};
 export function registerInitToggles(fn) {
@@ -150,7 +151,7 @@ export async function saveProject() {
   };
   const filename = (projectData.clientName || 'projekat').replace(/\s+/g, '_') + '.meco';
   try {
-    const res = await window.electronAPI?.saveFile({
+    const res = await electronAPI?.saveFile({
       filename,
       ext: 'meco',
       extName: 'Meco Projekat',
@@ -166,7 +167,7 @@ export async function saveProject() {
 
 export async function loadProject() {
   try {
-    const res = await window.electronAPI?.openFile({ extName: 'Meco Projekat', ext: 'meco' });
+    const res = await electronAPI?.openFile({ extName: 'Meco Projekat', ext: 'meco' });
     if (!res?.success) return;
     const data = JSON.parse(res.content);
     if (!data.version || !data.plan) {

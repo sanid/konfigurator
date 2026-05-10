@@ -4,21 +4,10 @@
  * Runs JSCAD boolean union + polygon→triangle conversion off the main thread.
  * Receives serialized geometry specs, posts back raw Float32Array buffers that
  * the main thread assembles into THREE.BufferGeometry objects.
- *
- * Message in:
- *   { id, ops: Array<GeomSpec> }
- *   GeomSpec: { type:'cylinder'|'polygon', matKey, ...params }
- *
- * Message out (on success):
- *   { id, results: Array<{ matKey, positions: Float32Array, normals: Float32Array }> }
- *
- * Message out (on error):
- *   { id, error: string }
  */
 
-// Import JSCAD UMD bundle — path is relative to the HTML file in Electron file:// context.
-// Workers in Electron inherit the same base URL as the renderer.
-importScripts('../node_modules/@jscad/modeling/dist/jscad-modeling.min.js');
+const jscadUrl = new URL('/jscad-modeling.min.js', self.location.href).href;
+importScripts(jscadUrl);
 
 const { primitives, transforms, booleans, extrusions } = self.jscadModeling;
 const { cylinder, polygon } = primitives;

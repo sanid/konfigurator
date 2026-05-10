@@ -6,33 +6,12 @@
    <meta name="viewport" content="width=device-width, initial-scale=1.0">
    <title>Meco Konfigurator 2026</title>
    <link rel="stylesheet" href="src/styles.css">
-   <script type="importmap">
-{
-"imports": {
-"three": "./node_modules/three/build/three.module.js",
-"three/addons/": "./node_modules/three/examples/jsm/",
-"@jscad/modeling": "./node_modules/@jscad/modeling/dist/jscad-modeling.min.js"
-}
-}
-</script>
-   <script src="node_modules/jspdf/dist/jspdf.umd.min.js"></script>
-   <script src="node_modules/jspdf-autotable/dist/jspdf.plugin.autotable.min.js"></script>
-   <script src="node_modules/@jscad/modeling/dist/jscad-modeling.min.js"></script>
-   <script>
-      if (!window.jscadModeling) {
-         if (typeof require !== 'undefined') {
-            window.jscadModeling = require('@jscad/modeling');
-         } else if (typeof module !== 'undefined' && module.exports) {
-            window.jscadModeling = module.exports;
-         }
-      }
-   </script>
 </head>
 
 <body class="light">
    <!-- Custom Title Bar -->
    <div class="titlebar" id="titlebar">
-      <div class="titlebar-drag">
+      <div class="titlebar-drag" data-tauri-drag-region>
          <div class="app-icon">⬡</div>
          <span class="app-title" data-i18n="appTitle">Meco Konfigurator 2026</span>
          <div class="lang-switcher">

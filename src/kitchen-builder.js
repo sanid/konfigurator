@@ -17,8 +17,9 @@ import { geom3ToThreeGeometry } from './jscadUtils.js';
 import { M, M1, MDF, HDF, RPL } from './modules-config.js';
 import { createMaterial, disposeAllMaterials } from './materials.js';
 import { coerceNumericParams } from './utils.js';
+import jscadModeling from '@jscad/modeling';
 
-const { primitives, transforms, booleans, extrusions, geometries } = window.jscadModeling;
+const { primitives, transforms, booleans, extrusions, geometries } = jscadModeling;
 const { cuboid, cylinder, polygon } = primitives;
 const { translate, rotateX, rotateY, rotateZ } = transforms;
 const { union } = booleans;

@@ -12,6 +12,7 @@ import {
 import { buildKitchenModule, clearGeomCache } from './kitchen-builder.js';
 import { buildDynamicPlan, validatePresetPlan, PRESET_LAYOUTS } from './presets.js';
 import { t, setLocale } from './i18n.js';
+import { electronAPI } from './tauri-bridge.js';
 import {
   initViewer,
   addModuleGroup,
@@ -408,9 +409,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ─── Title bar ────────────────────────────────────────────────────────────────
 function initTitlebarControls() {
-  document.getElementById('btn-minimize').onclick = () => window.electronAPI?.minimize();
-  document.getElementById('btn-maximize').onclick = () => window.electronAPI?.maximize();
-  document.getElementById('btn-close').onclick = () => window.electronAPI?.close();
+  document.getElementById('btn-minimize').onclick = () => electronAPI.minimize();
+  document.getElementById('btn-maximize').onclick = () => electronAPI.maximize();
+  document.getElementById('btn-close').onclick = () => electronAPI.close();
 
   const themeBtn = document.getElementById('btn-theme');
   themeBtn.addEventListener('click', () => {
