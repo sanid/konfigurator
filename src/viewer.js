@@ -7,8 +7,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 let scene, camera, renderer, labelRenderer, controls, animId;
+let _needsRender = true;
+let _dampingFrames = 0;
+const DAMPING_SETTLE_MS = 300;
 let ambientLight, keyLight, fillLight;
 let gridHelper, floorMesh, wallMesh;
 
@@ -17,6 +21,36 @@ const fixtureMarkers = new Map();
 
 // All module groups in the scene (key = plan index)
 const moduleGroups = new Map();
+
+// Drag state
+let _dragIdx = -1;
+let _dragActive = false;
+let _dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+let _dragOffset = new THREE.Vector3();
+let _onDragEnd = null;
+
+// Fixture geometry/material caches — avoids orphaned GL resources on re-add
+const _fixtureGeoCache = new Map();
+const _fixtureMatCache = new Map();
+
+function _getFixtureGeo(key, factory) {
+  if (!_fixtureGeoCache.has(key)) _fixtureGeoCache.set(key, factory());
+  return _fixtureGeoCache.get(key);
+}
+
+function _getFixtureMat(key, opts) {
+  if (!_fixtureMatCache.has(key)) {
+    _fixtureMatCache.set(key, new THREE.MeshBasicMaterial(opts));
+  }
+  return _fixtureMatCache.get(key);
+}
+
+function _disposeFixtureCaches() {
+  for (const geo of _fixtureGeoCache.values()) geo.dispose();
+  _fixtureGeoCache.clear();
+  for (const mat of _fixtureMatCache.values()) mat.dispose();
+  _fixtureMatCache.clear();
+}
 
 /**
  * initViewer — initialize Three.js scene in the given canvas element.
@@ -39,7 +73,7 @@ export function initViewer(canvas) {
   renderer = new THREE.WebGLRenderer({
     canvas,
     antialias: true,
-    powerPreference: 'high-performance'
+    powerPreference: 'high-performance',
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(w, h, false);
@@ -65,13 +99,13 @@ export function initViewer(canvas) {
   keyLight = new THREE.DirectionalLight(0xffffff, 1.8);
   keyLight.position.set(300, 500, 300);
   keyLight.castShadow = true;
-  keyLight.shadow.mapSize.set(2048, 2048);
+  keyLight.shadow.mapSize.set(1024, 1024);
   keyLight.shadow.camera.near = 10;
   keyLight.shadow.camera.far = 2000;
-  keyLight.shadow.camera.left = -800;
-  keyLight.shadow.camera.right = 800;
-  keyLight.shadow.camera.top = 800;
-  keyLight.shadow.camera.bottom = -800;
+  keyLight.shadow.camera.left = -400;
+  keyLight.shadow.camera.right = 400;
+  keyLight.shadow.camera.top = 400;
+  keyLight.shadow.camera.bottom = -400;
   keyLight.shadow.bias = -0.0003;
   scene.add(keyLight);
 
@@ -90,7 +124,7 @@ export function initViewer(canvas) {
   const floorMat = new THREE.MeshStandardMaterial({
     color: 0x0d0d20,
     roughness: 0.95,
-    metalness: 0.0
+    metalness: 0.0,
   });
   floorMesh = new THREE.Mesh(floorGeo, floorMat);
   floorMesh.rotation.x = -Math.PI / 2;
@@ -124,7 +158,7 @@ export function initViewer(canvas) {
   controls.mouseButtons = {
     LEFT: THREE.MOUSE.ROTATE,
     MIDDLE: THREE.MOUSE.DOLLY,
-    RIGHT: THREE.MOUSE.PAN
+    RIGHT: THREE.MOUSE.PAN,
   };
   controls.update();
 
@@ -132,16 +166,48 @@ export function initViewer(canvas) {
   const ro = new ResizeObserver(() => resizeViewer());
   ro.observe(canvas.parentElement);
 
-  // ─ Render Loop ──────────────────────────────────────────────────────────────
-  function animate() {
-    animId = requestAnimationFrame(animate);
+  // ─ On-demand Rendering ──────────────────────────────────────────────────────
+  function renderOnce() {
     controls.update();
     renderer.render(scene, camera);
-    if (labelRenderer) labelRenderer.render(scene, camera);
+    if (labelRenderer && activeLabels.length > 0) labelRenderer.render(scene, camera);
   }
-  animate();
+
+  function startDamping() {
+    if (_dampingFrames > 0) return;
+    _dampingFrames = Math.ceil(DAMPING_SETTLE_MS / 16);
+    dampingLoop();
+  }
+
+  function dampingLoop() {
+    if (_dampingFrames <= 0) return;
+    _dampingFrames--;
+    renderOnce();
+    if (_dampingFrames > 0) requestAnimationFrame(dampingLoop);
+  }
+
+  controls.addEventListener('change', () => {
+    _needsRender = true;
+    startDamping();
+  });
+
+  renderOnce();
 
   return { scene, camera, renderer, controls };
+}
+
+export function requestRender() {
+  if (!_needsRender) {
+    _needsRender = true;
+    requestAnimationFrame(() => {
+      _needsRender = false;
+      if (scene && camera && renderer) {
+        controls?.update();
+        renderer.render(scene, camera);
+        if (labelRenderer && activeLabels.length > 0) labelRenderer.render(scene, camera);
+      }
+    });
+  }
 }
 
 /**
@@ -161,7 +227,7 @@ export function setViewerTheme(theme) {
       gridHelper.material.opacity = 0.6;
       gridHelper.material.transparent = true;
     }
-    scene.traverse(obj => {
+    scene.traverse((obj) => {
       if (obj.isAmbientLight) obj.intensity = 1.2;
       if (obj.isDirectionalLight && obj.position.z > 0) obj.intensity = 1.2;
     });
@@ -175,7 +241,7 @@ export function setViewerTheme(theme) {
       gridHelper.material.opacity = 1.0;
       gridHelper.material.transparent = false;
     }
-    scene.traverse(obj => {
+    scene.traverse((obj) => {
       if (obj.isAmbientLight) obj.intensity = 0.6;
       if (obj.isDirectionalLight && obj.position.z > 0) obj.intensity = 1.8;
     });
@@ -232,7 +298,7 @@ export function moveModuleGroup(index, posX, posY, posZ, rotDeg) {
  * @param {number} deletedIdx
  */
 export function shiftModuleGroups(deletedIdx) {
-  const indices = Array.from(moduleGroups.keys()).sort((a,b) => a-b);
+  const indices = Array.from(moduleGroups.keys()).sort((a, b) => a - b);
   for (const idx of indices) {
     if (idx > deletedIdx) {
       const g = moduleGroups.get(idx);
@@ -257,93 +323,78 @@ export function addFixtureMarker(index, fixture) {
   const h = fixture.height || 120;
 
   if (fixture.type === 'window') {
-    // --- Window Glass ---
-    const glassGeo = new THREE.PlaneGeometry(w - 4, h - 4);
-    const glassMat = new THREE.MeshBasicMaterial({
+    const glassGeo = _getFixtureGeo(`plane:${w - 4},${h - 4}`, () => new THREE.PlaneGeometry(w - 4, h - 4));
+    const glassMat = _getFixtureMat('windowGlass', {
       color: 0x90caf9,
       opacity: 0.4,
       transparent: true,
-      side: THREE.DoubleSide
+      side: THREE.DoubleSide,
     });
     const glass = new THREE.Mesh(glassGeo, glassMat);
     glass.position.set(w / 2, h / 2, 0.5);
     group.add(glass);
 
-    // --- Window Frame (White) ---
-    const frameMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-
-    // Outer frame (4 strips)
-    const frameThickness = 3;
-    const addStrip = (sw, sh, px, py) => {
-      const g = new THREE.PlaneGeometry(sw, sh);
+    const frameMat = _getFixtureMat('windowFrame', { color: 0xffffff });
+    const ft = 3;
+    const addStrip = (geoKey, sw, sh, px, py) => {
+      const g = _getFixtureGeo(geoKey, () => new THREE.PlaneGeometry(sw, sh));
       const m = new THREE.Mesh(g, frameMat);
       m.position.set(px, py, 0.6);
       group.add(m);
     };
 
-    addStrip(w, frameThickness, w / 2, frameThickness / 2); // Bottom
-    addStrip(w, frameThickness, w / 2, h - frameThickness / 2); // Top
-    addStrip(frameThickness, h, frameThickness / 2, h / 2); // Left
-    addStrip(frameThickness, h, w - frameThickness / 2, h / 2); // Right
-
-    // Inner Cross
-    addStrip(w - 2 * frameThickness, 1, w / 2, h / 2); // Horizontal
-    addStrip(1, h - 2 * frameThickness, w / 2, h / 2); // Vertical
+    addStrip(`wstrip:b:${w},${ft}`, w, ft, w / 2, ft / 2);
+    addStrip(`wstrip:t:${w},${ft}`, w, ft, w / 2, h - ft / 2);
+    addStrip(`wstrip:l:${ft},${h}`, ft, h, ft / 2, h / 2);
+    addStrip(`wstrip:r:${ft},${h}`, ft, h, w - ft / 2, h / 2);
+    addStrip(`wstrip:h:${w - 2 * ft},1`, w - 2 * ft, 1, w / 2, h / 2);
+    addStrip(`wstrip:v:1,${h - 2 * ft}`, 1, h - 2 * ft, w / 2, h / 2);
 
     group.position.set(fixture.x, fixture.y, 1);
-
   } else if (fixture.type === 'door') {
-    // --- Door Main Body ---
-    const bodyGeo = new THREE.PlaneGeometry(w - 2, h - 1);
-    const bodyMat = new THREE.MeshBasicMaterial({
-      color: 0x5d4037, // Brighter brownish
-      side: THREE.DoubleSide
-    });
+    const bodyGeo = _getFixtureGeo(`plane:${w - 2},${h - 1}`, () => new THREE.PlaneGeometry(w - 2, h - 1));
+    const bodyMat = _getFixtureMat('doorBody', { color: 0x5d4037, side: THREE.DoubleSide });
     const body = new THREE.Mesh(bodyGeo, bodyMat);
     body.position.set(w / 2, h / 2, 0.5);
     group.add(body);
 
-    // --- Door Frame (Darker) ---
-    const frameMat = new THREE.MeshBasicMaterial({ color: 0x3e2723 });
-    const ft = 2; // Frame thickness
-    const addFrame = (sw, sh, px, py) => {
-      const g = new THREE.PlaneGeometry(sw, sh);
+    const frameMat = _getFixtureMat('doorFrame', { color: 0x3e2723 });
+    const ft = 2;
+    const addFrame = (geoKey, sw, sh, px, py) => {
+      const g = _getFixtureGeo(geoKey, () => new THREE.PlaneGeometry(sw, sh));
       const m = new THREE.Mesh(g, frameMat);
       m.position.set(px, py, 0.6);
       group.add(m);
     };
-    addFrame(w, ft, w / 2, h - ft / 2); // Top
-    addFrame(ft, h, ft / 2, h / 2); // Left
-    addFrame(ft, h, w - ft / 2, h / 2); // Right
+    addFrame(`dframe:t:${w},${ft}`, w, ft, w / 2, h - ft / 2);
+    addFrame(`dframe:l:${ft},${h}`, ft, h, ft / 2, h / 2);
+    addFrame(`dframe:r:${ft},${h}`, ft, h, w - ft / 2, h / 2);
 
-    // --- Handle (Knob) ---
-    const handleGeo = new THREE.SphereGeometry(2, 8, 8);
-    const handleMat = new THREE.MeshBasicMaterial({ color: 0xffd54f }); // Gold/Brass
+    const handleGeo = _getFixtureGeo('handleSphere:2', () => new THREE.SphereGeometry(2, 8, 8));
+    const handleMat = _getFixtureMat('handleGold', { color: 0xffd54f });
     const handle = new THREE.Mesh(handleGeo, handleMat);
-    // Position handle on the right side, mid-height
     handle.position.set(w - 10, h / 2, 2);
     group.add(handle);
 
     group.position.set(fixture.x, fixture.y, 1);
-
   } else {
-    // Basic marker (disc + line)
     group.position.set(fixture.x, fixture.y, 1);
 
-
-    // Disc
-    const discGeo = new THREE.CircleGeometry(4, 16);
-    const discMat = new THREE.MeshBasicMaterial({ color: fixture.color, depthTest: false });
+    const discGeo = _getFixtureGeo('disc:4,16', () => new THREE.CircleGeometry(4, 16));
+    const discMat = _getFixtureMat(`marker:${fixture.color}`, { color: fixture.color, depthTest: false });
     group.add(new THREE.Mesh(discGeo, discMat));
 
-    // Ring
-    const ringGeo = new THREE.RingGeometry(4, 5.5, 16);
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, side: THREE.DoubleSide });
+    const ringGeo = _getFixtureGeo('ring:4,5.5,16', () => new THREE.RingGeometry(4, 5.5, 16));
+    const ringMat = _getFixtureMat('markerRing', { color: 0xffffff, depthTest: false, side: THREE.DoubleSide });
     group.add(new THREE.Mesh(ringGeo, ringMat));
 
-    // Vertical dashed line up to floor level (thin box)
-    const lineGeo = new THREE.BoxGeometry(0.5, fixture.y, 0.5);
-    const lineMat = new THREE.MeshBasicMaterial({ color: fixture.color, opacity: 0.4, transparent: true, depthTest: false });
+    const lineGeo = _getFixtureGeo(`box:0.5,${fixture.y},0.5`, () => new THREE.BoxGeometry(0.5, fixture.y, 0.5));
+    const lineMat = _getFixtureMat(`markerLine:${fixture.color}`, {
+      color: fixture.color,
+      opacity: 0.4,
+      transparent: true,
+      depthTest: false,
+    });
     const line = new THREE.Mesh(lineGeo, lineMat);
     line.position.set(0, -fixture.y / 2, 0);
     group.add(line);
@@ -357,13 +408,13 @@ export function removeFixtureMarker(index) {
   if (fixtureMarkers.has(index)) {
     const g = fixtureMarkers.get(index);
     scene.remove(g);
-    g.traverse(c => { if (c.isMesh) { c.geometry.dispose(); c.material.dispose(); } });
     fixtureMarkers.delete(index);
   }
 }
 
 export function clearFixtureMarkers() {
   for (const idx of [...fixtureMarkers.keys()]) removeFixtureMarker(idx);
+  _disposeFixtureCaches();
 }
 
 /** Rebuild all module groups (e.g. after settings change). */
@@ -382,7 +433,8 @@ export function setCameraView(view) {
     camera.position.set(target.x, target.y + 60, 600);
   } else if (view === 'top') {
     camera.position.set(target.x, 700, target.z);
-  } else { // iso
+  } else {
+    // iso
     camera.position.set(target.x + 250, target.y + 200, 400);
   }
   camera.lookAt(target);
@@ -397,7 +449,7 @@ export function resetCamera() {
   controls.update();
 }
 
-/** 
+/**
  * mode: 'cool' | 'warm'
  */
 export function setLightingMode(mode) {
@@ -418,40 +470,140 @@ export function setLightingMode(mode) {
   }
 }
 
+// ─── Photorealistic Render Mode ────────────────────────────────────────────────
+let _pbrEnabled = false;
+let _savedEnvMap = null;
+
+export function setPBRMode(enabled) {
+  if (!scene || !renderer) return;
+  _pbrEnabled = enabled;
+
+  if (enabled) {
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    pmremGenerator.compileEquirectangularShader();
+    const envTexture = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+    _savedEnvMap = scene.environment;
+    scene.environment = envTexture;
+    scene.background = new THREE.Color(0xf0f0f5);
+
+    scene.traverse((obj) => {
+      if (obj.isAmbientLight) obj.intensity = 0.2;
+      if (obj.isDirectionalLight && obj.position.z > 0) obj.intensity = 0.5;
+    });
+
+    if (floorMesh) {
+      floorMesh.material.roughness = 0.7;
+      floorMesh.material.metalness = 0.1;
+      floorMesh.material.color.set(0xd0d0e0);
+    }
+    if (wallMesh) {
+      wallMesh.material.roughness = 0.9;
+      wallMesh.material.color.set(0xe8e8f0);
+    }
+
+    pmremGenerator.dispose();
+  } else {
+    if (scene.environment) scene.environment.dispose();
+    scene.environment = _savedEnvMap;
+    scene.background = new THREE.Color(0xdfe0f0);
+    _savedEnvMap = null;
+
+    scene.traverse((obj) => {
+      if (obj.isAmbientLight) obj.intensity = 1.2;
+      if (obj.isDirectionalLight && obj.position.z > 0) obj.intensity = 1.2;
+    });
+
+    if (floorMesh) {
+      floorMesh.material.roughness = 0.95;
+      floorMesh.material.metalness = 0.0;
+      floorMesh.material.color.set(0xd0d0e8);
+    }
+    if (wallMesh) {
+      wallMesh.material.roughness = 1.0;
+      wallMesh.material.color.set(0xe8e8f4);
+    }
+  }
+  requestRender();
+}
+
+export function isPBRMode() {
+  return _pbrEnabled;
+}
+
 // ─── Highlight selected module ────────────────────────────────────────────────
+// Materials come from the shared cache in kitchen-builder, so we never mutate
+// them in place. On highlight we swap each mesh to a clone with emissive set,
+// remember the original, and on restore we put the original back and dispose
+// the clone — otherwise repeated select/deselect cycles leak materials.
 let _highlightedIdx = -1;
-const _originalColors = new Map();
+const _originalMaterials = new Map(); // mesh.uuid → original shared material
+let _directionArrow = null;
 
 export function highlightModule(index) {
-  // Restore previous highlight
   if (_highlightedIdx >= 0 && moduleGroups.has(_highlightedIdx)) {
     restoreHighlight(_highlightedIdx);
   }
+  _removeDirectionArrow();
   _highlightedIdx = index;
 
   if (index < 0 || !moduleGroups.has(index)) return;
   const group = moduleGroups.get(index);
-  group.traverse(child => {
-    if (child.isMesh && child.material) {
-      const origColor = child.material.color.clone();
-      _originalColors.set(child.uuid, origColor);
-      child.material = child.material.clone();
-      child.material.emissive = new THREE.Color(0x1133aa);
-      child.material.emissiveIntensity = 0.3;
-    }
+  group.traverse((child) => {
+    if (!child.isMesh || !child.material) return;
+    _originalMaterials.set(child.uuid, child.material);
+    const cloned = child.material.clone();
+    cloned.emissive = new THREE.Color(0x1133aa);
+    cloned.emissiveIntensity = 0.3;
+    child.material = cloned;
   });
+
+  _addDirectionArrow(index);
 }
 
 function restoreHighlight(index) {
   if (!moduleGroups.has(index)) return;
   const group = moduleGroups.get(index);
-  group.traverse(child => {
-    if (child.isMesh && child.material) {
-      child.material.emissiveIntensity = 0;
-      child.material.emissive = new THREE.Color(0x000000);
-    }
+  group.traverse((child) => {
+    if (!child.isMesh) return;
+    const original = _originalMaterials.get(child.uuid);
+    if (!original) return;
+    const clone = child.material;
+    child.material = original;
+    if (clone !== original) clone.dispose();
   });
-  _originalColors.clear();
+  _originalMaterials.clear();
+}
+
+function _addDirectionArrow(index) {
+  const group = moduleGroups.get(index);
+  if (!group) return;
+
+  const box = new THREE.Box3().setFromObject(group);
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+
+  const arrowLen = Math.min(size.x, size.y, size.z) * 0.3;
+  const arrowGeo = new THREE.ConeGeometry(arrowLen * 0.3, arrowLen, 8);
+  const arrowMat = new THREE.MeshBasicMaterial({ color: 0x4f7aff, depthTest: false });
+  _directionArrow = new THREE.Mesh(arrowGeo, arrowMat);
+
+  _directionArrow.position.set(center.x, box.max.y + arrowLen * 0.6, center.z);
+  _directionArrow.rotation.x = Math.PI;
+  _directionArrow.renderOrder = 999;
+
+  scene.add(_directionArrow);
+  requestRender();
+}
+
+function _removeDirectionArrow() {
+  if (_directionArrow) {
+    scene.remove(_directionArrow);
+    _directionArrow.geometry.dispose();
+    _directionArrow.material.dispose();
+    _directionArrow = null;
+  }
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -472,7 +624,7 @@ function addAxisHelper() {
 }
 
 function disposeGroup(group) {
-  group.traverse(child => {
+  group.traverse((child) => {
     if (child.isMesh) {
       // Only dispose geometry — materials are shared from cache, do not dispose
       child.geometry?.dispose();
@@ -507,7 +659,9 @@ export function getModuleSnapInfoAt(x, y) {
     // Traverse up to find the group with planIndex or match in moduleGroups
     for (const [idx, group] of moduleGroups.entries()) {
       let isAncestor = false;
-      group.traverse(child => { if (child === inter.object) isAncestor = true; });
+      group.traverse((child) => {
+        if (child === inter.object) isAncestor = true;
+      });
       if (isAncestor) {
         foundIdx = idx;
         break;
@@ -520,10 +674,10 @@ export function getModuleSnapInfoAt(x, y) {
     const worldNormal = inter.face.normal.clone();
     worldNormal.transformDirection(inter.object.matrixWorld);
 
-    return { 
-      index: foundIdx, 
-      normal: worldNormal, 
-      point: inter.point 
+    return {
+      index: foundIdx,
+      normal: worldNormal,
+      point: inter.point,
     };
   }
   return null;
@@ -538,6 +692,93 @@ export function getModuleSnapInfoAt(x, y) {
 export function getModuleIndexAt(x, y) {
   const info = getModuleSnapInfoAt(x, y);
   return info ? info.index : null;
+}
+
+// ─── Drag-to-move ──────────────────────────────────────────────────────────────
+
+/**
+ * beginDrag — start dragging a module along the floor plane.
+ * @param {number} idx - plan index
+ * @param {number} nx - normalized mouse X (-1 to 1)
+ * @param {number} ny - normalized mouse Y (-1 to 1)
+ * @param {function} onDragEnd - callback(newPosX, newPosY) when drag ends
+ * @returns {boolean} true if drag started
+ */
+export function beginDrag(idx, nx, ny, onDragEnd) {
+  const g = moduleGroups.get(idx);
+  if (!g || !camera) return false;
+
+  _dragIdx = idx;
+  _dragActive = true;
+  _onDragEnd = onDragEnd;
+
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2(nx, ny);
+  raycaster.setFromCamera(mouse, camera);
+
+  const planeY = g.position.y;
+  _dragPlane.set(new THREE.Vector3(0, 1, 0), -planeY);
+
+  const intersection = new THREE.Vector3();
+  raycaster.ray.intersectPlane(_dragPlane, intersection);
+  if (intersection) {
+    _dragOffset.copy(g.position).sub(intersection);
+  }
+
+  controls.enabled = false;
+  return true;
+}
+
+/**
+ * updateDrag — call on mousemove during active drag.
+ * @param {number} nx - normalized mouse X
+ * @param {number} ny - normalized mouse Y
+ */
+export function updateDrag(nx, ny) {
+  if (!_dragActive || _dragIdx < 0) return;
+
+  const g = moduleGroups.get(_dragIdx);
+  if (!g) return;
+
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2(nx, ny);
+  raycaster.setFromCamera(mouse, camera);
+
+  const intersection = new THREE.Vector3();
+  raycaster.ray.intersectPlane(_dragPlane, intersection);
+  if (intersection) {
+    g.position.x = intersection.x + _dragOffset.x;
+    g.position.z = intersection.z + _dragOffset.z;
+    requestRender();
+  }
+}
+
+/**
+ * endDrag — finish drag, return the new world position.
+ * @returns {{ idx: number, worldX: number, worldZ: number } | null}
+ */
+export function endDrag() {
+  if (!_dragActive) return null;
+  _dragActive = false;
+  controls.enabled = true;
+
+  const g = moduleGroups.get(_dragIdx);
+  const result = g ? { idx: _dragIdx, worldX: g.position.x, worldZ: g.position.z } : null;
+  const callback = _onDragEnd;
+  const idx = _dragIdx;
+
+  _dragIdx = -1;
+  _onDragEnd = null;
+
+  if (callback && result) {
+    callback(result.worldX, result.worldZ);
+  }
+
+  return result;
+}
+
+export function isDragging() {
+  return _dragActive;
 }
 
 // ─── Measurements ─────────────────────────────────────────────────────────────
@@ -583,6 +824,6 @@ export function showMeasurements(index, { s, v, d }) {
  * clearMeasurements — remove all dimension labels from the scene
  */
 export function clearMeasurements() {
-  activeLabels.forEach(l => scene.remove(l));
+  activeLabels.forEach((l) => scene.remove(l));
   activeLabels = [];
 }

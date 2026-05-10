@@ -5,11 +5,11 @@
  * Material constants (in cm): M=1.6, M1=1.8, MDF=1.8, HDF=0.3
  */
 
-export const M = 1.6;   // 16mm board
-export const M1 = 1.8;   // 18mm board
-export const MDF = 1.8;   // 18mm MDF front
-export const HDF = 0.3;   // 3mm HDF back panel
-export const RPL = 3.8;   // 38mm worktop
+export const M = 1.6; // 16mm board
+export const M1 = 1.8; // 18mm board
+export const MDF = 1.8; // 18mm MDF front
+export const HDF = 0.3; // 3mm HDF back panel
+export const RPL = 3.8; // 38mm worktop
 
 // Default display settings
 export const DEFAULT_SETTINGS = {
@@ -18,7 +18,7 @@ export const DEFAULT_SETTINGS = {
   pozadina: true,
   celafioka: true,
   fioke: true,
-  radna_ploca: true
+  radna_ploca: true,
 };
 
 // Default materials
@@ -27,7 +27,7 @@ export const DEFAULT_MATERIALS = {
   korpus: { name: 'white', color: '#F5F5F5', type: 'color' },
   radna: { name: 'Moccasin', color: '#D2B48C', type: 'color' },
   granc: { name: 'DimGray', color: '#696969', type: 'color' },
-  cokla: { name: 'Silver', color: '#C0C0C0', type: 'color' }
+  cokla: { name: 'Silver', color: '#C0C0C0', type: 'color' },
 };
 
 /**
@@ -35,85 +35,85 @@ export const DEFAULT_MATERIALS = {
  * Mirrors the OpenSCAD module signatures, values in cm.
  */
 export const MODULE_GROUPS = {
-  'Donji': {
-    'radni_stol': [
+  Donji: {
+    radni_stol: [
       ['s', '60'],
       ['v', '82'],
       ['d', '55'],
       ['c', '10'],
       ['brvr', '2'],
-      ['brp', '1']
+      ['brp', '1'],
     ],
-    'fiokar': [
+    fiokar: [
       ['s', '60'],
       ['v', '82'],
       ['d', '55'],
       ['c', '10'],
       ['brf', '4'],
       ['brfp', '2'],
-      ['brfd', '1']
+      ['brfd', '1'],
     ],
-    'gola_radni_stol': [
+    gola_radni_stol: [
       ['s', '60'],
       ['v', '88'],
       ['d', '55'],
       ['c', '10'],
       ['brp', '1'],
-      ['brvr', '2']
+      ['brvr', '2'],
     ],
-    'fiokar_gola': [
+    fiokar_gola: [
       ['s', '60'],
       ['v', '88'],
       ['d', '55'],
       ['c', '10'],
       ['brf', '4'],
       ['brfp', '2'],
-      ['brfd', '1']
+      ['brfd', '1'],
     ],
-    'vrata_sudo_masine': [
-      ['s', '60'],
-      ['v', '82'],
-      ['d', '55'],
-      ['c', '10']
-    ],
-    'vrata_sudo_masine_gola': [
-      ['s', '60'],
-      ['v', '88'],
-      ['d', '55'],
-      ['c', '10']
-    ],
-    'radni_stol_rerne': [
+    vrata_sudo_masine: [
       ['s', '60'],
       ['v', '82'],
       ['d', '55'],
       ['c', '10'],
-      ['rerna', '58.5']
     ],
-    'radni_stol_rerne_gola': [
+    vrata_sudo_masine_gola: [
       ['s', '60'],
       ['v', '88'],
       ['d', '55'],
       ['c', '10'],
-      ['rerna', '58.5']
     ],
-    'radni_stol_rerne_gola_bez_fioke': [
+    radni_stol_rerne: [
+      ['s', '60'],
+      ['v', '82'],
+      ['d', '55'],
+      ['c', '10'],
+      ['rerna', '58.5'],
+    ],
+    radni_stol_rerne_gola: [
       ['s', '60'],
       ['v', '88'],
       ['d', '55'],
       ['c', '10'],
-      ['rerna', '58.5']
+      ['rerna', '58.5'],
     ],
-    'sporet': [
+    radni_stol_rerne_gola_bez_fioke: [
+      ['s', '60'],
+      ['v', '88'],
+      ['d', '55'],
+      ['c', '10'],
+      ['rerna', '58.5'],
+    ],
+    sporet: [
       ['s', '60'],
       ['v', '85'],
-      ['d', '60']
+      ['d', '60'],
     ],
-    'samostojeci_frizider': [
+    samostojeci_frizider: [
       ['s', '60'],
       ['v', '185'],
-      ['d', '65']
+      ['d', '65'],
     ],
-    'radni_stol_pored_stuba': [
+    radni_stol_pored_stuba: [
       ['s', '70'],
       ['v', '82'],
       ['d', '55'],
@@ -122,134 +122,134 @@ export const MODULE_GROUPS = {
       ['brv', '2'],
       ['ss', '20'],
       ['ds', '17'],
-      ['vs', '250']
+      ['vs', '250'],
     ],
-    'radni_stol_pored_stuba_gola': [
+    radni_stol_pored_stuba_gola: [
       ['s', '70'],
       ['v', '82'],
       ['d', '55'],
       ['c', '10'],
       ['brv', '2'],
       ['ss', '20'],
-      ['ds', '17']
-    ]
+      ['ds', '17'],
+    ],
   },
-  'Ugaoni': {
-    'dug_element_90': [
+  Ugaoni: {
+    dug_element_90: [
       ['dss', '80'],
       ['lss', '90'],
       ['v', '82'],
       ['d', '55'],
       ['c', '10'],
-      ['brp', '1']
+      ['brp', '1'],
     ],
-    'dug_element_90_gola': [
+    dug_element_90_gola: [
       ['dss', '100'],
       ['lss', '80'],
       ['v', '88'],
       ['d', '55'],
       ['c', '10'],
-      ['brp', '1']
+      ['brp', '1'],
     ],
-    'dug_element_90_desni': [
+    dug_element_90_desni: [
       ['dss', '80'],
       ['lss', '90'],
       ['v', '82'],
       ['d', '55'],
       ['c', '10'],
-      ['brp', '1']
+      ['brp', '1'],
     ],
-    'dug_element_90_desni_gola': [
+    dug_element_90_desni_gola: [
       ['dss', '100'],
       ['lss', '80'],
       ['v', '88'],
       ['d', '55'],
       ['c', '10'],
-      ['brp', '1']
+      ['brp', '1'],
     ],
-    'donji_ugaoni_element_45_sa_plocom': [
+    donji_ugaoni_element_45_sa_plocom: [
       ['dss', '90'],
       ['lss', '90'],
       ['v', '82'],
       ['d', '55'],
-      ['c', '10']
+      ['c', '10'],
     ],
-    'donji_ugaoni_element_45_sa_plocom_gola': [
+    donji_ugaoni_element_45_sa_plocom_gola: [
       ['dss', '90'],
       ['lss', '90'],
       ['v', '88'],
       ['d', '55'],
-      ['c', '10']
-    ]
+      ['c', '10'],
+    ],
   },
-  'Gornji': {
-    'klasicna_viseca': [
+  Gornji: {
+    klasicna_viseca: [
       ['s', '60'],
       ['v', '72'],
       ['d', '35'],
       ['brp', '1'],
-      ['brvr', '2']
+      ['brvr', '2'],
     ],
-    'klasicna_viseca_gola': [
+    klasicna_viseca_gola: [
       ['s', '30'],
       ['v', '80'],
       ['d', '35'],
       ['brp', '2'],
-      ['brvr', '1']
+      ['brvr', '1'],
     ],
-    'klasicna_viseca_gola_ispod_grede': [
+    klasicna_viseca_gola_ispod_grede: [
       ['s', '35'],
       ['v', '80'],
       ['d', '35'],
       ['brp', '2'],
-      ['brvr', '2']
+      ['brvr', '2'],
     ],
-    'viseca_na_kipu': [
+    viseca_na_kipu: [
       ['s', '80'],
       ['v', '100'],
       ['d', '35'],
       ['brp', '2'],
-      ['brvr', '2']
+      ['brvr', '2'],
     ],
-    'viseca_na_kipu_gola': [
+    viseca_na_kipu_gola: [
       ['s', '80'],
       ['v', '80'],
       ['d', '35'],
       ['brp', '2'],
-      ['brvr', '2']
+      ['brvr', '2'],
     ],
-    'gue90': [
+    gue90: [
       ['sl', '60'],
       ['sd', '60'],
       ['v', '72'],
       ['d', '35'],
-      ['brp', '1']
+      ['brp', '1'],
     ],
-    'gue90rotiran': [
+    gue90rotiran: [
       ['sl', '60'],
       ['sd', '90'],
       ['v', '80'],
       ['d', '35'],
-      ['brp', '2']
+      ['brp', '2'],
     ],
-    'lijevi_gue90': [
+    lijevi_gue90: [
       ['sl', '70'],
       ['sd', '100'],
       ['v', '80'],
       ['d', '35'],
-      ['brp', '2']
-    ]
+      ['brp', '2'],
+    ],
   },
-  'Visoki': {
-    'ormar_visoki': [
+  Visoki: {
+    ormar_visoki: [
       ['s', '60'],
       ['v', '210'],
       ['d', '55'],
       ['c', '10'],
       ['brp', '4'],
-      ['brvr', '2']
+      ['brvr', '2'],
     ],
-    'visoki_element_za_kombinovani_frizider': [
+    visoki_element_za_kombinovani_frizider: [
       ['s', '60'],
       ['v', '250'],
       ['vde', '88'],
@@ -257,9 +257,9 @@ export const MODULE_GROUPS = {
       ['c', '10'],
       ['brp', '2'],
       ['brv', '1'],
-      ['frizider', '180']
+      ['frizider', '180'],
     ],
-    'visoki_element_za_kombinovani_frizider_gola': [
+    visoki_element_za_kombinovani_frizider_gola: [
       ['s', '60'],
       ['v', '250'],
       ['vde', '88'],
@@ -267,9 +267,9 @@ export const MODULE_GROUPS = {
       ['c', '10'],
       ['brp', '2'],
       ['brv', '1'],
-      ['frizider', '180']
+      ['frizider', '180'],
     ],
-    'visoki_element_za_frizider': [
+    visoki_element_za_frizider: [
       ['s', '60'],
       ['v', '250'],
       ['vde', '88'],
@@ -277,9 +277,9 @@ export const MODULE_GROUPS = {
       ['c', '10'],
       ['brp', '2'],
       ['brv', '1'],
-      ['frizider', '180']
+      ['frizider', '180'],
     ],
-    'visoki_element_za_frizider_gola': [
+    visoki_element_za_frizider_gola: [
       ['s', '60'],
       ['v', '250'],
       ['vde', '88'],
@@ -287,9 +287,9 @@ export const MODULE_GROUPS = {
       ['c', '10'],
       ['brp', '2'],
       ['brv', '1'],
-      ['frizider', '180']
+      ['frizider', '180'],
     ],
-    'visoki_element_za_rernu': [
+    visoki_element_za_rernu: [
       ['s', '60'],
       ['v', '250'],
       ['vde', '88'],
@@ -297,9 +297,9 @@ export const MODULE_GROUPS = {
       ['c', '10'],
       ['brp', '2'],
       ['brv', '1'],
-      ['rerna', '58.5']
+      ['rerna', '58.5'],
     ],
-    'visoki_element_za_rernu_sa_fiokama': [
+    visoki_element_za_rernu_sa_fiokama: [
       ['s', '60'],
       ['v', '250'],
       ['vde', '88'],
@@ -307,9 +307,9 @@ export const MODULE_GROUPS = {
       ['c', '10'],
       ['brp', '2'],
       ['brv', '1'],
-      ['rerna', '58.5']
+      ['rerna', '58.5'],
     ],
-    'visoki_element_za_rernu_i_mikrotalasnu_pec_sa_fiokama': [
+    visoki_element_za_rernu_i_mikrotalasnu_pec_sa_fiokama: [
       ['s', '60'],
       ['v', '250'],
       ['vde', '88'],
@@ -318,20 +318,20 @@ export const MODULE_GROUPS = {
       ['brp', '1'],
       ['brv', '1'],
       ['rerna', '58.5'],
-      ['mikrovele', '38']
-    ]
+      ['mikrovele', '38'],
+    ],
   },
-  'Aparati': {
-    'ploca_za_kuvanje': [
+  Aparati: {
+    ploca_za_kuvanje: [
       ['x', '58'],
       ['y', '51'],
-      ['z', '0.5']
+      ['z', '0.5'],
     ],
-    'sudopera': [
+    sudopera: [
       ['D', '48'],
-      ['h', '18']
-    ]
-  }
+      ['h', '18'],
+    ],
+  },
 };
 
 /** All named color presets */
@@ -350,7 +350,7 @@ export const COLOR_PRESETS = [
   { name: 'black', label: 'Crna', hex: '#1A1A1A' },
   { name: 'anthracite', label: 'Antracit', hex: '#3B3B3B' },
   { name: 'navy', label: 'Mornarsko', hex: '#1B3A6B' },
-  { name: 'dusty_rose', label: 'Ružičasta', hex: '#C9899A' }
+  { name: 'dusty_rose', label: 'Ružičasta', hex: '#C9899A' },
 ];
 
 /** Texture presets for wood, stone etc. */
@@ -363,5 +363,5 @@ export const TEXTURE_PRESETS = [
   { name: 'marble_wh', label: 'Mermer bij.', base: '#F0EEE8', grain: '#CCCCCC', type: 'marble' },
   { name: 'marble_gr', label: 'Mermer siv.', base: '#9A9A9A', grain: '#707070', type: 'marble' },
   { name: 'granite', label: 'Granit', base: '#707070', grain: '#404040', type: 'granite' },
-  { name: 'concrete', label: 'Beton', base: '#888888', grain: '#666666', type: 'concrete' }
+  { name: 'concrete', label: 'Beton', base: '#888888', grain: '#666666', type: 'concrete' },
 ];

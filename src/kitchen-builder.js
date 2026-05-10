@@ -15,7 +15,8 @@ import * as THREE from 'three';
 import { geom3ToThreeGeometry } from './jscadUtils.js';
 
 import { M, M1, MDF, HDF, RPL } from './modules-config.js';
-import { createMaterial } from './materials.js';
+import { createMaterial, disposeAllMaterials } from './materials.js';
+import { coerceNumericParams } from './utils.js';
 
 const { primitives, transforms, booleans, extrusions, geometries } = window.jscadModeling;
 const { cuboid, cylinder, polygon } = primitives;
@@ -50,16 +51,23 @@ function _getWorker() {
   try {
     _worker = new Worker(new URL('./jscad.worker.js', import.meta.url), { type: 'classic' });
     _worker.onmessage = (e) => {
-      const { id, results, error } = e.data;
+      const { id, results, error, type: msgType } = e.data;
+      if (msgType === 'pong') {
+        _workerReady = true;
+        return;
+      }
       const cb = _pendingWorkerCbs.get(id);
-      if (cb) { _pendingWorkerCbs.delete(id); cb(results, error); }
+      if (cb) {
+        _pendingWorkerCbs.delete(id);
+        cb(results, error);
+      }
     };
     _worker.onerror = (e) => {
       console.warn('JSCAD worker error:', e);
-      // On worker failure, fall back to sync path permanently
       _worker = null;
+      _workerReady = false;
     };
-    _workerReady = true;
+    _worker.postMessage({ type: 'ping' });
   } catch (e) {
     console.warn('JSCAD worker unavailable, using sync path:', e.message);
     _worker = null;
@@ -78,8 +86,11 @@ function _dispatchToWorker(groups) {
   return new Promise((resolve) => {
     const id = ++_workerIdCounter;
     _pendingWorkerCbs.set(id, (results, error) => {
-      if (error || !results) { resolve(null); return; }
-      const geos = results.map(r => {
+      if (error || !results) {
+        resolve(null);
+        return;
+      }
+      const geos = results.map((r) => {
         const geo = new THREE.BufferGeometry();
         geo.setAttribute('position', new THREE.BufferAttribute(r.positions, 3));
         geo.setAttribute('normal', new THREE.BufferAttribute(r.normals, 3));
@@ -91,26 +102,20 @@ function _dispatchToWorker(groups) {
   });
 }
 
-// ─── Global material cache ────────────────────────────────────────────────────
-// Keyed by the serialized material definition so identical materials are reused
-// across all buildKitchenModule calls instead of being recreated each time.
-const _matCache = new Map();
+// ─── Material helpers ─────────────────────────────────────────────────────────
+// Materials are created via createMaterial() from materials.js, which already
+// caches internally. We only cache the special fixed materials (handle, leg, box)
+// here since they don't go through createMaterial.
+const _fixedMatCache = new Map();
 
 function _getCachedMat(matDef) {
   if (!matDef) return null;
-  const key = typeof matDef === 'string' ? matDef : JSON.stringify(matDef);
-  if (_matCache.has(key)) return _matCache.get(key);
-  const mat = createMaterial(matDef);
-  _matCache.set(key, mat);
-  return mat;
+  return createMaterial(matDef);
 }
 
-/** Call this when materials change globally (e.g. user picks a new material).
- *  Does NOT dispose — existing scene meshes may still reference these materials.
- *  Three.js will GC them once no mesh holds a reference.
- *  Geometry cache is NOT cleared here — shapes don't change when materials change. */
 export function clearMaterialCache() {
-  _matCache.clear();
+  _fixedMatCache.clear();
+  disposeAllMaterials();
 }
 
 /** Call this when settings change (front_vrata, polica, etc.) or the app resets,
@@ -137,12 +142,26 @@ function _geomCacheKey(name, p, settings) {
   return name + '|' + JSON.stringify(p) + '|' + JSON.stringify(settings);
 }
 
-/** Evict oldest entry when cache is full. */
+/** Evict least-recently-used entry when cache is full. */
 function _geomCacheSet(key, val) {
   if (_geomCache.size >= _GEOM_CACHE_MAX) {
-    _geomCache.delete(_geomCache.keys().next().value);
+    const oldest = _geomCache.keys().next().value;
+    const entry = _geomCache.get(oldest);
+    if (entry) {
+      for (const { bufferGeo } of entry.threeGeos) bufferGeo?.dispose();
+    }
+    _geomCache.delete(oldest);
   }
   _geomCache.set(key, val);
+}
+
+/** Touch an entry to move it to the end (most recently used). */
+function _geomCacheGet(key) {
+  if (!_geomCache.has(key)) return undefined;
+  const val = _geomCache.get(key);
+  _geomCache.delete(key);
+  _geomCache.set(key, val);
+  return val;
 }
 
 // ─── addBox — stores box data for direct THREE.BoxGeometry creation ───────────
@@ -161,7 +180,7 @@ function addBox(group, sx, sy, sz, tx, ty, tz, matKey) {
 // SCAD: back rail at translate([m1, d-70, v-m1]), front rail at translate([m1, 0, v-m1])
 // frontRailZ override: gola modules use v-6 (v-60mm), regular use v-M1
 function buildCorpus(group, s, v, d, c, mKorpus, settings, frontRailZ) {
-  const frz = frontRailZ !== undefined ? frontRailZ : (v - M1);
+  const frz = frontRailZ !== undefined ? frontRailZ : v - M1;
   // Left side
   addBox(group, M1, d, v - c, 0, -d, c, mKorpus);
   // Right side
@@ -178,9 +197,6 @@ function buildCorpus(group, s, v, d, c, mKorpus, settings, frontRailZ) {
   }
 }
 
-
-
-
 function buildShelves(group, s, v, d, c, brp, mKorpus, settings) {
   if (!settings.polica || brp <= 0) return;
   const spacing = (v - c - M1) / (brp + 1);
@@ -188,8 +204,6 @@ function buildShelves(group, s, v, d, c, brp, mKorpus, settings) {
     addBox(group, s - 2 * M1, d - 5, M1, M1, -d + 5, c + i * spacing, mKorpus);
   }
 }
-
-
 
 // ─── Geom spec recording ──────────────────────────────────────────────────────
 // Each slow-path helper records serializable specs alongside JSCAD geoms so the
@@ -207,23 +221,42 @@ function addCevastaRuckaHorizontala(group, tx, ty, tz, duzina = 18.6, visina = 2
   // Posts: JSCAD cylinder default axis is Z (outward from door) — no rotation needed
   let p1 = translate(
     [tx - duzina / 2 + visina - debljina / 2, tz, ty + visina / 2],
-    cylinder({ radius: r, height: visina, segments: 16 })
+    cylinder({ radius: r, height: visina, segments: 16 }),
   );
   let p2 = translate(
     [tx + duzina / 2 - visina - debljina / 2, tz, ty + visina / 2],
-    cylinder({ radius: r, height: visina, segments: 16 })
+    cylinder({ radius: r, height: visina, segments: 16 }),
   );
   // Bar: lies along X axis, at depth = ty + visina + 1
   let b = translate(
     [tx, tz, ty + visina + 1],
-    rotateY(Math.PI / 2, cylinder({ radius: r, height: duzina, segments: 16 }))
+    rotateY(Math.PI / 2, cylinder({ radius: r, height: duzina, segments: 16 })),
   );
   if (!group.materials['handle']) group.materials['handle'] = [];
   group.materials['handle'].push(p1, p2, b);
   // Worker specs
-  _addSpec(group, 'handle', { type: 'cylinder', radius: r, height: visina, segments: 16, translate: [tx - duzina / 2 + visina - debljina / 2, tz, ty + visina / 2] });
-  _addSpec(group, 'handle', { type: 'cylinder', radius: r, height: visina, segments: 16, translate: [tx + duzina / 2 - visina - debljina / 2, tz, ty + visina / 2] });
-  _addSpec(group, 'handle', { type: 'cylinder', radius: r, height: duzina, segments: 16, rotateY: Math.PI / 2, translate: [tx, tz, ty + visina + 1] });
+  _addSpec(group, 'handle', {
+    type: 'cylinder',
+    radius: r,
+    height: visina,
+    segments: 16,
+    translate: [tx - duzina / 2 + visina - debljina / 2, tz, ty + visina / 2],
+  });
+  _addSpec(group, 'handle', {
+    type: 'cylinder',
+    radius: r,
+    height: visina,
+    segments: 16,
+    translate: [tx + duzina / 2 - visina - debljina / 2, tz, ty + visina / 2],
+  });
+  _addSpec(group, 'handle', {
+    type: 'cylinder',
+    radius: r,
+    height: duzina,
+    segments: 16,
+    rotateY: Math.PI / 2,
+    translate: [tx, tz, ty + visina + 1],
+  });
 }
 
 // ─── cevasta_rucka (vertical) ─────────────────────────────────────────────────
@@ -234,32 +267,52 @@ function addCevastaRucka(group, tx, ty, tz, duzina = 18.6, visina = 2.5, debljin
   // Posts: JSCAD cylinder default axis is Z (outward from door) — no rotation needed
   let p1 = translate(
     [tx, tz - duzina / 2 + visina - debljina / 2, ty + visina / 2],
-    cylinder({ radius: r, height: visina, segments: 16 })
+    cylinder({ radius: r, height: visina, segments: 16 }),
   );
   let p2 = translate(
     [tx, tz + duzina / 2 - visina - debljina / 2, ty + visina / 2],
-    cylinder({ radius: r, height: visina, segments: 16 })
+    cylinder({ radius: r, height: visina, segments: 16 }),
   );
   // Bar: lies along Y axis (height), at depth = ty + visina + 1
   let b = translate(
     [tx, tz, ty + visina + 1],
-    rotateX(Math.PI / 2, cylinder({ radius: r, height: duzina, segments: 16 }))
+    rotateX(Math.PI / 2, cylinder({ radius: r, height: duzina, segments: 16 })),
   );
   if (!group.materials['handle']) group.materials['handle'] = [];
   group.materials['handle'].push(p1, p2, b);
   // Worker specs
-  _addSpec(group, 'handle', { type: 'cylinder', radius: r, height: visina, segments: 16, translate: [tx, tz - duzina / 2 + visina - debljina / 2, ty + visina / 2] });
-  _addSpec(group, 'handle', { type: 'cylinder', radius: r, height: visina, segments: 16, translate: [tx, tz + duzina / 2 - visina - debljina / 2, ty + visina / 2] });
-  _addSpec(group, 'handle', { type: 'cylinder', radius: r, height: duzina, segments: 16, rotateX: Math.PI / 2, translate: [tx, tz, ty + visina + 1] });
+  _addSpec(group, 'handle', {
+    type: 'cylinder',
+    radius: r,
+    height: visina,
+    segments: 16,
+    translate: [tx, tz - duzina / 2 + visina - debljina / 2, ty + visina / 2],
+  });
+  _addSpec(group, 'handle', {
+    type: 'cylinder',
+    radius: r,
+    height: visina,
+    segments: 16,
+    translate: [tx, tz + duzina / 2 - visina - debljina / 2, ty + visina / 2],
+  });
+  _addSpec(group, 'handle', {
+    type: 'cylinder',
+    radius: r,
+    height: duzina,
+    segments: 16,
+    rotateX: Math.PI / 2,
+    translate: [tx, tz, ty + visina + 1],
+  });
 }
 
 function addLegs(group, s, c, depth, customPositions = null) {
-  const r = 1.5, h = c;
+  const r = 1.5,
+    h = c;
   const positions = customPositions || [
     [3, depth - 5.5],
     [s - 3, depth - 5.5],
     [3, 5.5],
-    [s - 3, 5.5]
+    [s - 3, 5.5],
   ];
   for (const [px, py] of positions) {
     let cyl = cylinder({ radius: r, height: h });
@@ -268,7 +321,14 @@ function addLegs(group, s, c, depth, customPositions = null) {
     if (!group.materials['leg']) group.materials['leg'] = [];
     group.materials['leg'].push(cyl);
     // Worker spec
-    _addSpec(group, 'leg', { type: 'cylinder', radius: r, height: h, segments: 16, rotateX: -Math.PI / 2, translate: [px, h / 2, py] });
+    _addSpec(group, 'leg', {
+      type: 'cylinder',
+      radius: r,
+      height: h,
+      segments: 16,
+      rotateX: -Math.PI / 2,
+      translate: [px, h / 2, py],
+    });
   }
 }
 
@@ -283,7 +343,8 @@ function addLegs(group, s, c, depth, customPositions = null) {
 function build_radni_stol(p, mats, settings) {
   const { s, v, d, c, brvr = 2, brp = 1 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   // SCAD: front rail at v-m1
   buildCorpus(g, s, v, d, c, mK, settings, v - M1);
@@ -316,7 +377,8 @@ function build_radni_stol(p, mats, settings) {
 function build_gola_radni_stol(p, mats, settings) {
   const { s, v, d, c, brp = 1, brvr = 2 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   // SCAD gola_radni_stol: front rail at v-60 (v-6cm)
   buildCorpus(g, s, v, d, c, mK, settings, v - 6);
@@ -343,7 +405,8 @@ function build_gola_radni_stol(p, mats, settings) {
 function build_fiokar(p, mats, settings) {
   const { s, v, d, c, brf = 4, brfp = 2, brfd = 1 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
   const kl = 50; // drawer depth (cm)
 
   // SCAD fiokar: front rail at v-m1
@@ -396,7 +459,8 @@ function build_fiokar(p, mats, settings) {
 function build_fiokar_gola(p, mats, settings) {
   const { s, v, d, c, brf = 4, brfp = 2, brfd = 1 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
   const kl = 50;
 
   // Corpus — front rail at v-60 (v-6cm)
@@ -409,8 +473,8 @@ function build_fiokar_gola(p, mats, settings) {
 
   if (settings.celafioka && brf > 0) {
     const pom = (v - c) / brf;
-    const fh_deep = pom * 2 - 3.0;  // SCAD: (v-c)/brf*2-30
-    const fh_shrt = pom - 1.8;       // SCAD: (v-c)/brf-18
+    const fh_deep = pom * 2 - 3.0; // SCAD: (v-c)/brf*2-30
+    const fh_shrt = pom - 1.8; // SCAD: (v-c)/brf-18
     const fw = s - 0.3;
 
     addBox(g, fw, MDF, fh_deep, 0.15, -d - MDF, c, mF);
@@ -423,7 +487,7 @@ function build_fiokar_gola(p, mats, settings) {
 
   if (settings.fioke) {
     const pom = (v - c) / brf;
-    const dboxH = pom * 2 - 10.0;  // SCAD gola: (v-c)/brf*2-100
+    const dboxH = pom * 2 - 10.0; // SCAD gola: (v-c)/brf*2-100
     const mstrH = dboxH - 1.2 - M1;
     const dnoW = s - 2 * M1 - 0.8 - 2 * M;
     const baseZ = c + 1.2;
@@ -480,7 +544,8 @@ function build_vrata_sudo_masine_gola(p, mats, settings) {
 function build_radni_stol_rerne(p, mats, settings) {
   const { s, v, d, c, rerna = 58.5 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   // Sides
   addBox(g, M1, d, v - c, 0, -d, c, mK);
@@ -517,7 +582,8 @@ function build_radni_stol_rerne(p, mats, settings) {
 function build_radni_stol_rerne_gola(p, mats, settings) {
   const { s, v, d, c, rerna = 58.5 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   // Sides
   addBox(g, M1, d, v - c, 0, -d, c, mK);
@@ -560,7 +626,8 @@ function build_radni_stol_rerne_gola(p, mats, settings) {
 function build_radni_stol_rerne_gola_bez_fioke(p, mats, settings) {
   const { s, v, d, c, rerna = 58.5 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   // Sides
   addBox(g, M1, d, v - c, 0, -d, c, mK);
@@ -622,12 +689,13 @@ function build_samostojeci_frizider(p, mats, settings) {
 function build_dug_element_90(p, mats, settings) {
   const { dss, lss, v, d, c, brp = 1 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   // Long side corpus
-  addBox(g, M1, d, v - c, 0, -d, c, mK);           // left
-  addBox(g, M1, d, v - c, dss - M1, -d, c, mK);    // right
-  addBox(g, dss - 2 * M1, d, M1, M1, -d, c, mK);   // bottom
+  addBox(g, M1, d, v - c, 0, -d, c, mK); // left
+  addBox(g, M1, d, v - c, dss - M1, -d, c, mK); // right
+  addBox(g, dss - 2 * M1, d, M1, M1, -d, c, mK); // bottom
   // Top rails
   // Long side back
   addBox(g, dss - 2 * M1, 7, M1, M1, -7, v - M1, mK);
@@ -635,7 +703,7 @@ function build_dug_element_90(p, mats, settings) {
   addBox(g, dss - 2 * M1, 7, M1, M1, -d, settings.isGola ? v - 6 : v - M1, mK);
 
   // Short side corpus (perpendicular)
-  addBox(g, d, M1, v - c, 0, -lss, c, mK);         // back of short side
+  addBox(g, d, M1, v - c, 0, -lss, c, mK); // back of short side
   addBox(g, d, lss - d - M1, M1, 0, -lss + M1, c, mK); // bottom short side
   // Short side back
   addBox(g, 7, lss - d - M1, M1, 0, -lss + M1, v - M1, mK); // top left short
@@ -670,10 +738,14 @@ function build_dug_element_90(p, mats, settings) {
 
   // Corner cabinet has 8 legs in SCAD
   const legs = [
-    [3, 5.5], [dss - 3, 5.5],
-    [3, d - 5.5], [dss - 3, d - 5.5],
-    [d - 5.5, lss - 3], [3, lss - 3],
-    [d - 5.5, -3], [d + 5.5, 5.5]
+    [3, 5.5],
+    [dss - 3, 5.5],
+    [3, d - 5.5],
+    [dss - 3, d - 5.5],
+    [d - 5.5, lss - 3],
+    [3, lss - 3],
+    [d - 5.5, -3],
+    [d + 5.5, 5.5],
   ];
   addLegs(g, dss, c, d, legs);
   return g;
@@ -689,14 +761,15 @@ function build_dug_element_90(p, mats, settings) {
 function build_dug_element_90_desni(p, mats, settings) {
   const { dss, lss, v, d, c, brp = 1 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
   const frontRailZ = settings.isGola ? v - 6 : v - M1;
 
   // ── Long arm corpus ──────────────────────────────────────────────────────────
   // original left  panel (tx=0,      sx=M1)  → mirror tx = dss-M1
   addBox(g, M1, d, v - c, dss - M1, -d, c, mK);
   // original right panel (tx=dss-M1, sx=M1)  → mirror tx = 0
-  addBox(g, M1, d, v - c, 0,        -d, c, mK);
+  addBox(g, M1, d, v - c, 0, -d, c, mK);
   // bottom (symmetric in X)
   addBox(g, dss - 2 * M1, d, M1, M1, -d, c, mK);
   // top back rail (symmetric)
@@ -706,12 +779,12 @@ function build_dug_element_90_desni(p, mats, settings) {
 
   // ── Short arm corpus — now at RIGHT end (X = dss-d … dss) ────────────────────
   // original back   (tx=0,   sx=d)  → mirror tx = dss-d
-  addBox(g, d, M1,          v - c, dss - d, -lss,      c,  mK); // back wall
-  addBox(g, d, lss - d - M1, M1,  dss - d, -lss + M1, c,  mK); // bottom
+  addBox(g, d, M1, v - c, dss - d, -lss, c, mK); // back wall
+  addBox(g, d, lss - d - M1, M1, dss - d, -lss + M1, c, mK); // bottom
   // top-back rail: original (tx=0, sx=7) → mirror tx = dss-7
-  addBox(g, 7, lss - d - M1, M1, dss - 7,     -lss + M1, v - M1,    mK);
+  addBox(g, 7, lss - d - M1, M1, dss - 7, -lss + M1, v - M1, mK);
   // top-front rail: original (tx=d-7, sx=7) → mirror tx = dss-(d-7)-7 = dss-d
-  addBox(g, 7, lss - d - M1, M1, dss - d,     -lss + M1, frontRailZ, mK);
+  addBox(g, 7, lss - d - M1, M1, dss - d, -lss + M1, frontRailZ, mK);
 
   // ── Shelves ──────────────────────────────────────────────────────────────────
   if (settings.polica && brp > 0) {
@@ -723,7 +796,7 @@ function build_dug_element_90_desni(p, mats, settings) {
 
   // ── Back panels ─────────────────────────────────────────────────────────────
   if (settings.pozadina) {
-    addBox(g, dss, HDF, v - c, 0,   0,    c, mK); // long arm back
+    addBox(g, dss, HDF, v - c, 0, 0, c, mK); // long arm back
     addBox(g, HDF, lss, v - c, dss, -lss, c, mK); // short arm back (mirror of tx=-HDF → dss)
   }
 
@@ -731,10 +804,10 @@ function build_dug_element_90_desni(p, mats, settings) {
   // Original long door:  tx=0.15+d+MDF, sx=ldw  → mirror tx = dss-(0.15+d+MDF)-ldw = 0.15
   // Original short door: tx=d,          sx=MDF  → mirror tx = dss-d-MDF
   if (settings.front_vrata) {
-    const dh  = v - c - 0.3;
+    const dh = v - c - 0.3;
     const ldw = dss - d - MDF - 0.3;
     const sdw = lss - d - MDF - 0.3;
-    addBox(g, ldw, MDF, dh, 0.15,         -d - MDF,    c, mF); // long door (left side)
+    addBox(g, ldw, MDF, dh, 0.15, -d - MDF, c, mF); // long door (left side)
     addBox(g, MDF, sdw, dh, dss - d - MDF, -lss + 0.15, c, mF); // short door (right side face)
     // Handle: mirror of (dss-5) → 5
     addCevastaRucka(g, 5, d + MDF, v - 18.6 / 2 - 5);
@@ -743,14 +816,14 @@ function build_dug_element_90_desni(p, mats, settings) {
   // ── Legs ────────────────────────────────────────────────────────────────────
   // Original legs mirrored: tx_R = dss - tx_L
   const legs = [
-    [dss - 3,     5.5],
-    [3,           5.5],
-    [dss - 3,     d - 5.5],
-    [3,           d - 5.5],
+    [dss - 3, 5.5],
+    [3, 5.5],
+    [dss - 3, d - 5.5],
+    [3, d - 5.5],
     [dss - d + 5.5, lss - 3],
-    [dss - 3,     lss - 3],
+    [dss - 3, lss - 3],
     [dss - d + 5.5, -3],
-    [dss - d - 5.5, 5.5]
+    [dss - d - 5.5, 5.5],
   ];
   addLegs(g, dss, c, d, legs);
   return g;
@@ -768,10 +841,10 @@ function build_dug_element_90_desni_gola(p, mats, settings) {
   const mF = mats.front;
 
   if (settings.front_vrata) {
-    const dh  = v - c - 3.3;
+    const dh = v - c - 3.3;
     const ldw = dss - d - MDF - 0.3;
     const sdw = lss - d - MDF - 0.3;
-    addBox(g, ldw, MDF, dh, 0.15,          -d - MDF,    c, mF);
+    addBox(g, ldw, MDF, dh, 0.15, -d - MDF, c, mF);
     addBox(g, MDF, sdw, dh, dss - d - MDF, -lss + 0.15, c, mF);
   }
   return g;
@@ -802,7 +875,8 @@ function build_dug_element_90_gola(p, mats, settings) {
 function build_donji_ugaoni_element_45(p, mats, settings) {
   const { dss, lss, v, d, c } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   // Two straight sides
   addBox(g, M1, d, v - c, dss - M1, -d, c, mK);
@@ -811,24 +885,34 @@ function build_donji_ugaoni_element_45(p, mats, settings) {
   // EXTREME PRECISION: 1:1 SCAD polygon for the bottom
   const botPoly = polygon({
     points: [
-      [0, 0], [0, -lss + M1], [d, -lss + M1], [dss - M1, -d], [dss - M1, 0]
-    ]
+      [0, 0],
+      [0, -lss + M1],
+      [d, -lss + M1],
+      [dss - M1, -d],
+      [dss - M1, 0],
+    ],
   });
 
   let botExt = extrudeLinear({ height: M1 }, botPoly);
   // Lay it flat onto XZ plane
   botExt = rotateX(-Math.PI / 2, botExt); // maps Z to Y
-  botExt = translate([0, c + M1 / 2, 0], botExt); // Z=0 is centered around c+M1/2 vertically 
+  botExt = translate([0, c + M1 / 2, 0], botExt); // Z=0 is centered around c+M1/2 vertically
 
   if (!g.materials[mK]) g.materials[mK] = [];
   g.materials[mK].push(botExt);
   // Worker spec for the bottom polygon
   _addSpec(g, mK, {
     type: 'polygon',
-    points: [[0, 0], [0, -lss + M1], [d, -lss + M1], [dss - M1, -d], [dss - M1, 0]],
+    points: [
+      [0, 0],
+      [0, -lss + M1],
+      [d, -lss + M1],
+      [dss - M1, -d],
+      [dss - M1, 0],
+    ],
     extrudeHeight: M1,
     rotateX: -Math.PI / 2,
-    translate: [0, c + M1 / 2, 0]
+    translate: [0, c + M1 / 2, 0],
   });
 
   // Stranica u uglu (SCAD: cube([150, m1, v-c-2*m1]) @ [0,-m1,c+m1])
@@ -871,9 +955,11 @@ function build_donji_ugaoni_element_45(p, mats, settings) {
 
   // 5 legs for 45 corner
   const legs = [
-    [3, 5.5], [dss - 3, 5.5],
-    [3, lss - 5.5], [dss - 3, d - 5.5],
-    [d - 5.5, lss - 3]
+    [3, 5.5],
+    [dss - 3, 5.5],
+    [3, lss - 5.5],
+    [dss - 3, d - 5.5],
+    [d - 5.5, lss - 3],
   ];
   addLegs(g, dss, c, d, legs);
   return g;
@@ -911,7 +997,7 @@ function build_donji_ugaoni_element_45_gola(p, mats, settings) {
 function buildUpperCorpus(g, s, v, d, mK, settings) {
   addBox(g, M1, d, v, 0, -d, 0, mK);
   addBox(g, M1, d, v, s - M1, -d, 0, mK);
-  addBox(g, s - 2 * M1, d, M1, M1, -d, 0, mK);      // bottom
+  addBox(g, s - 2 * M1, d, M1, M1, -d, 0, mK); // bottom
   addBox(g, s - 2 * M1, d, M1, M1, -d, v - M1, mK); // top
   if (settings.pozadina) addBox(g, s, HDF, v, 0, 0, 0, mK);
 }
@@ -919,7 +1005,8 @@ function buildUpperCorpus(g, s, v, d, mK, settings) {
 function build_klasicna_viseca(p, mats, settings) {
   const { s, v, d, brp = 1, brvr = 2 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   buildUpperCorpus(g, s, v, d, mK, settings);
 
@@ -951,13 +1038,14 @@ function build_klasicna_viseca(p, mats, settings) {
 function build_klasicna_viseca_gola(p, mats, settings) {
   const { s, v, d, brp = 2, brvr = 1 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   // Corpus (slightly different: dno is 22mm shallower)
   addBox(g, M1, d, v, 0, -d, 0, mK);
   addBox(g, M1, d, v, s - M1, -d, 0, mK);
   addBox(g, s - 2 * M1, d - 2.2, M1, M1, -d + 2.2, 0, mK); // bottom
-  addBox(g, s - 2 * M1, d, M1, M1, -d, v - M1, mK);          // top
+  addBox(g, s - 2 * M1, d, M1, M1, -d, v - M1, mK); // top
   if (settings.pozadina) addBox(g, s, HDF, v, 0, 0, 0, mK);
 
   if (settings.polica && brp > 0) {
@@ -979,9 +1067,11 @@ function build_klasicna_viseca_gola(p, mats, settings) {
  */
 function build_klasicna_viseca_gola_ispod_grede(p, mats, settings) {
   const { s, v, d, brp = 2, brvr = 1 } = p;
-  const sg = 30, vg = 21; // Beam width and height in cm
+  const sg = 30,
+    vg = 21; // Beam width and height in cm
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   // Stranice
   addBox(g, M1, d, v - vg, 0, -d, 0, mK);
@@ -1015,14 +1105,15 @@ function build_klasicna_viseca_gola_ispod_grede(p, mats, settings) {
 function build_viseca_na_kipu(p, mats, settings) {
   const { s, v, d, brp = 2, brvr = 2 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   buildUpperCorpus(g, s, v, d, mK, settings);
   // Middle horizontal divider
   addBox(g, s - 2 * M1, d, M1, M1, -d, (v - M1) / 2, mK);
 
   if (settings.polica && brp > 0) {
-    const sp = ((v - M1) / 2) / 2;
+    const sp = (v - M1) / 2 / 2;
     for (const i of [1, 3]) {
       addBox(g, s - 2 * M1, d - 3, M1, M1, -d + 3, i * sp, mK);
     }
@@ -1048,20 +1139,21 @@ function build_viseca_na_kipu(p, mats, settings) {
 function build_viseca_na_kipu_gola(p, mats, settings) {
   const { s, v, d, brp = 2, brvr = 2 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   // Custom corpus for GOLA variant: bottom is shallower (d-2.2)
   addBox(g, M1, d, v, 0, -d, 0, mK);
   addBox(g, M1, d, v, s - M1, -d, 0, mK);
   addBox(g, s - 2 * M1, d - 2.2, M1, M1, -d + 2.2, 0, mK); // bottom
-  addBox(g, s - 2 * M1, d, M1, M1, -d, v - M1, mK);          // top
+  addBox(g, s - 2 * M1, d, M1, M1, -d, v - M1, mK); // top
   if (settings.pozadina) addBox(g, s, HDF, v, 0, 0, 0, mK);
 
   // Middle horizontal divider
   addBox(g, s - 2 * M1, d, M1, M1, -d, (v - M1) / 2, mK);
 
   if (settings.polica && brp > 0) {
-    const sp = ((v - M1) / 2) / 2;
+    const sp = (v - M1) / 2 / 2;
     for (const i of [1, 3]) {
       addBox(g, s - 2 * M1, d - 3, M1, M1, -d + 3, i * sp, mK);
     }
@@ -1085,7 +1177,8 @@ function build_viseca_na_kipu_gola(p, mats, settings) {
 function build_gue90(p, mats, settings) {
   const { sl, sd, v, d, brp = 1 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   // Long side
   addBox(g, M1, d, v, 0, -d, 0, mK);
@@ -1174,7 +1267,8 @@ function build_cokla(p, mats, settings) {
 function build_ormar_visoki(p, mats, settings) {
   const { s, v, d, c, brp = 4, brvr = 2 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   addBox(g, M1, d, v - c, 0, -d, c, mK);
   addBox(g, M1, d, v - c, s - M1, -d, c, mK);
@@ -1209,7 +1303,8 @@ function build_ormar_visoki(p, mats, settings) {
 function build_radni_stol_pored_stuba(p, mats, settings) {
   const { s, v, d, c, brp = 1, brv = 2, ss = 20, ds = 17, vs = 250 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   // Stranice
   addBox(g, M1, d, v - c, 0, -d, c, mK); // left
@@ -1266,7 +1361,8 @@ function build_radni_stol_pored_stuba_gola(p, mats, settings) {
   // Gola variant: doors 3.3cm shorter, no handles, front rail at v-60 (v-6cm)
   const { s, v, d, c, brp = 1, brv = 2, ss = 20, ds = 17 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   // Stranice — identical to regular
   addBox(g, M1, d, v - c, 0, -d, c, mK); // left
@@ -1282,7 +1378,7 @@ function build_radni_stol_pored_stuba_gola(p, mats, settings) {
 
   // Traverzne — GOLA: back rail at v-m1, front rail DROPPED to v-60
   addBox(g, s - M1 - ss, 7, M1, M1, -7, v - M1, mK); // back (cut for pillar)
-  addBox(g, s - 2 * M1, 7, M1, M1, -d, v - 6, mK);   // front (dropped to v-60 = v-6cm)
+  addBox(g, s - 2 * M1, 7, M1, M1, -d, v - 6, mK); // front (dropped to v-60 = v-6cm)
 
   if (settings.pozadina) {
     addBox(g, s - ss, HDF, v - c, 0, 0, c, mK);
@@ -1324,7 +1420,8 @@ function build_radni_stol_pored_stuba_gola(p, mats, settings) {
 function build_visoki_element_za_kombinovani_frizider(p, mats, settings) {
   const { s, v, vde = 88, d, c, brp = 2, brv = 1, frizider = 180 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   // Sides (full height minus plinth and 3*M1 for top frame)
   addBox(g, M1, d, v - c - 3 * M1, 0, -d, c + M1, mK);
@@ -1338,7 +1435,7 @@ function build_visoki_element_za_kombinovani_frizider(p, mats, settings) {
 
   // Back panel (above fridge zone only)
   if (settings.pozadina) {
-    const lesonitH = (v - frizider - c - 1.3) - 3 * M1;
+    const lesonitH = v - frizider - c - 1.3 - 3 * M1;
     if (lesonitH > 0) addBox(g, s - M1, HDF, lesonitH, M1 / 2, -3, frizider + 1 + c + M1, mK);
   }
 
@@ -1354,7 +1451,7 @@ function build_visoki_element_za_kombinovani_frizider(p, mats, settings) {
   // Doors
   if (settings.front_vrata) {
     // Upper doors (above fridge)
-    const upperH = (v - frizider - 1.3 - c) - 3 * M1 - 0.3;
+    const upperH = v - frizider - 1.3 - c - 3 * M1 - 0.3;
     if (upperH > 0) {
       const dw = s / brv - 0.3;
       for (let i = 0; i < brv; i++) {
@@ -1365,7 +1462,7 @@ function build_visoki_element_za_kombinovani_frizider(p, mats, settings) {
     const lowerH = vde - c - 0.3;
     if (lowerH > 0) addBox(g, s - 0.3, MDF, lowerH, 0.15, -d - MDF, c, mF);
     // Middle door
-    const midH = (v - vde) - (v - frizider - 1.3 - c - M1) - 0.3;
+    const midH = v - vde - (v - frizider - 1.3 - c - M1) - 0.3;
     if (midH > 0) addBox(g, s - 0.3, MDF, midH, 0.15, -d - MDF, vde, mF);
   }
 
@@ -1384,7 +1481,8 @@ function build_visoki_element_za_kombinovani_frizider(p, mats, settings) {
 function build_visoki_element_za_kombinovani_frizider_gola(p, mats, settings) {
   const { s, v, vde = 88, d, c, brp = 2, brv = 1, frizider = 180 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   // Left side (narrower by 22mm for handle clearance)
   addBox(g, M1, d - 2.2, v - c - 3 * M1, 0, -d + 2.2, c + M1, mK);
@@ -1397,7 +1495,7 @@ function build_visoki_element_za_kombinovani_frizider_gola(p, mats, settings) {
   addBox(g, s - 2 * M1, d - 3, M1, M1, -d, v - 3 * M1, mK);
 
   if (settings.pozadina) {
-    const lesonitH = (v - frizider - c - 1.3) - 3 * M1;
+    const lesonitH = v - frizider - c - 1.3 - 3 * M1;
     if (lesonitH > 0) addBox(g, s - M1, HDF, lesonitH, M1 / 2, -3, frizider + 1 + c + M1, mK);
   }
 
@@ -1409,7 +1507,7 @@ function build_visoki_element_za_kombinovani_frizider_gola(p, mats, settings) {
   }
 
   if (settings.front_vrata) {
-    const upperH = (v - frizider - 1.3 - c) - 3 * M1 - 0.3;
+    const upperH = v - frizider - 1.3 - c - 3 * M1 - 0.3;
     if (upperH > 0) {
       const dw = s / brv - 0.3;
       for (let i = 0; i < brv; i++) {
@@ -1418,7 +1516,7 @@ function build_visoki_element_za_kombinovani_frizider_gola(p, mats, settings) {
     }
     const lowerH = vde - c - 0.3;
     if (lowerH > 0) addBox(g, s - 0.3, MDF, lowerH, 0.15, -d - MDF, c, mF);
-    const midH = (v - vde) - (v - frizider - 1.3 - c - M1) - 0.3;
+    const midH = v - vde - (v - frizider - 1.3 - c - M1) - 0.3;
     if (midH > 0) addBox(g, s - 0.3, MDF, midH, 0.15, -d - MDF, vde, mF);
   }
 
@@ -1437,7 +1535,8 @@ function build_visoki_element_za_kombinovani_frizider_gola(p, mats, settings) {
 function build_visoki_element_za_frizider(p, mats, settings) {
   const { s, v, vde = 88, d, c, brp = 2, brv = 1, frizider = 180 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   addBox(g, M1, d, v - c - 3 * M1, 0, -d, c + M1, mK);
   addBox(g, M1, d, v - c - 3 * M1, s - M1, -d, c + M1, mK);
@@ -1446,7 +1545,7 @@ function build_visoki_element_za_frizider(p, mats, settings) {
   addBox(g, s - 2 * M1, d - 3, M1, M1, -d + 3, v - 3 * M1, mK);
 
   if (settings.pozadina) {
-    const lH = (v - frizider - c - 1.3) - 3 * M1;
+    const lH = v - frizider - c - 1.3 - 3 * M1;
     if (lH > 0) addBox(g, s - M1, HDF, lH, M1 / 2, -3, frizider + 1 + c + M1, mK);
   }
 
@@ -1458,7 +1557,7 @@ function build_visoki_element_za_frizider(p, mats, settings) {
   }
 
   if (settings.front_vrata) {
-    const upperH = (v - frizider - 1.3 - c) - 3 * M1 - 0.3;
+    const upperH = v - frizider - 1.3 - c - 3 * M1 - 0.3;
     if (upperH > 0) {
       const dw = s / brv - 0.3;
       for (let i = 0; i < brv; i++) {
@@ -1484,7 +1583,8 @@ function build_visoki_element_za_frizider(p, mats, settings) {
 function build_visoki_element_za_frizider_gola(p, mats, settings) {
   const { s, v, vde = 88, d, c, brp = 2, brv = 1, frizider = 180 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   addBox(g, M1, d, v - c - 3 * M1, 0, -d, c + M1, mK);
   addBox(g, M1, d - 2.2, v - c - 3 * M1, s - M1, -d + 2.2, c + M1, mK);
@@ -1493,7 +1593,7 @@ function build_visoki_element_za_frizider_gola(p, mats, settings) {
   addBox(g, s - 2 * M1, d - 3, M1, M1, -d + 3, v - 3 * M1, mK);
 
   if (settings.pozadina) {
-    const lH = (v - frizider - c - 1.3) - 3 * M1;
+    const lH = v - frizider - c - 1.3 - 3 * M1;
     if (lH > 0) addBox(g, s - M1, HDF, lH, M1 / 2, -3, frizider + 1 + c + M1, mK);
   }
 
@@ -1505,7 +1605,7 @@ function build_visoki_element_za_frizider_gola(p, mats, settings) {
   }
 
   if (settings.front_vrata) {
-    const upperH = (v - frizider - 1.3 - c) - 3 * M1 - 0.3;
+    const upperH = v - frizider - 1.3 - c - 3 * M1 - 0.3;
     if (upperH > 0) {
       const dw = s / brv - 0.3;
       for (let i = 0; i < brv; i++) {
@@ -1531,7 +1631,8 @@ function build_visoki_element_za_frizider_gola(p, mats, settings) {
 function build_visoki_element_za_rernu(p, mats, settings) {
   const { s, v, vde = 88, d, c, brp = 2, brv = 1, rerna = 58.5 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   addBox(g, M1, d, v - c - 3 * M1, 0, -d, c + M1, mK);
   addBox(g, M1, d, v - c - 3 * M1, s - M1, -d, c + M1, mK);
@@ -1587,7 +1688,8 @@ function build_visoki_element_za_rernu(p, mats, settings) {
 function build_visoki_element_za_rernu_sa_fiokama(p, mats, settings) {
   const { s, v, vde = 88, d, c, brp = 2, brv = 1, rerna = 58.5 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   addBox(g, M1, d, v - c - 3 * M1, 0, -d, c + M1, mK);
   addBox(g, M1, d, v - c - 3 * M1, s - M1, -d, c + M1, mK);
@@ -1651,7 +1753,8 @@ function build_visoki_element_za_rernu_sa_fiokama(p, mats, settings) {
 function build_visoki_element_za_rernu_i_mikrotalasnu_pec_sa_fiokama(p, mats, settings) {
   const { s, v, vde = 88, d, c, brp = 1, brv = 1, rerna = 58.5, mikrovele = 38 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   addBox(g, M1, d, v - c - 3 * M1, 0, -d, c + M1, mK);
   addBox(g, M1, d, v - c - 3 * M1, s - M1, -d, c + M1, mK);
@@ -1729,7 +1832,7 @@ function build_ploca_za_kuvanje(p, mats, settings) {
 function build_sudopera(p, mats, settings) {
   const { D = 48, h = 18 } = p;
   const g = { materials: {} };
-  const mSink = new THREE.MeshStandardMaterial({ color: 0xB0C4DE, roughness: 0.15, metalness: 0.6 });
+  const mSink = new THREE.MeshStandardMaterial({ color: 0xb0c4de, roughness: 0.15, metalness: 0.6 });
   // Rim (outer rectangle)
   addBox(g, D + 4, D + 4, 0.3, -2, -D / 2 - 2 - 3, 0, mSink);
   // Basin (inner box, inset)
@@ -1749,7 +1852,7 @@ function build_gue90rotiran(p, mats, settings) {
   // Transform each box: rotate 90° around Y, then translate X by sl.
   // Rotation 90° around Y: (x, y, z) → (z, y, -x)
   if (g.boxes) {
-    g.boxes = g.boxes.map(b => {
+    g.boxes = g.boxes.map((b) => {
       const nx = b.cz + sl;
       const nz = -b.cx;
       // sx/sz swap due to Y rotation
@@ -1758,7 +1861,7 @@ function build_gue90rotiran(p, mats, settings) {
   }
   // Handle any residual JSCAD geoms (e.g. if gue90 grows handles later)
   for (const matKey in g.materials) {
-    g.materials[matKey] = g.materials[matKey].map(geom => {
+    g.materials[matKey] = g.materials[matKey].map((geom) => {
       let r = rotateY(Math.PI / 2, geom);
       return translate([sl, 0, 0], r);
     });
@@ -1773,7 +1876,8 @@ function build_gue90rotiran(p, mats, settings) {
 function build_lijevi_gue90(p, mats, settings) {
   const { sl, sd, v, d, brp = 1 } = p;
   const g = { materials: {} };
-  const mK = mats.korpus, mF = mats.front;
+  const mK = mats.korpus,
+    mF = mats.front;
 
   // Left side
   addBox(g, M1, d, v, 0, -d, 0, mK);
@@ -1855,7 +1959,7 @@ const BUILDERS = {
   radna_ploca_ugaona: build_radna_ploca_ugaona,
   cokla: build_cokla,
   ploca_za_kuvanje: build_ploca_za_kuvanje,
-  sudopera: build_sudopera
+  sudopera: build_sudopera,
 };
 
 /**
@@ -1868,113 +1972,115 @@ const BUILDERS = {
  * @param {number} rotDeg - Y-axis rotation in degrees
  * @returns {THREE.Group}
  */
-export function buildKitchenModule(name, params, materialDefs, settings, posX, posY, posZ, rotDeg) {
-  const builder = BUILDERS[name];
-  if (!builder) {
-    console.warn(`No builder for module: ${name}`);
-    return new THREE.Group();
-  }
+// ─── Shared build helpers ─────────────────────────────────────────────────────
+const _BUILDER_MATS = { front: 'front', korpus: 'korpus', radna: 'radna', granc: 'granc', cokla: 'cokla' };
 
-  // Convert numeric params once
-  const p = {};
-  for (const [k, v] of Object.entries(params)) {
-    const n = parseFloat(v);
-    p[k] = isNaN(n) ? v : n;
+function _getOrCreateCachedMat(key, makeMat) {
+  let m = _fixedMatCache.get(key);
+  if (!m) {
+    m = makeMat();
+    _fixedMatCache.set(key, m);
   }
+  return m;
+}
 
-  // ── Resolve real Three.js materials (use global cache) ───────────────────────
-  const realMats = {
-    front:  _getCachedMat(materialDefs.front),
+function _coerceParams(params) {
+  return coerceNumericParams(params);
+}
+
+function _resolveRealMats(materialDefs) {
+  return {
+    front: _getCachedMat(materialDefs.front),
     korpus: _getCachedMat(materialDefs.korpus),
-    radna:  _getCachedMat(materialDefs.radna),
-    granc:  _getCachedMat(materialDefs.granc),
-    cokla:  _getCachedMat(materialDefs.cokla),
-    handle: _getCachedMat('__handle__') || (() => {
-      const m = new THREE.MeshStandardMaterial({ color: 0xC0C0C0, roughness: 0.2, metalness: 0.9 });
-      _matCache.set('__handle__', m); return m;
-    })(),
-    leg: _getCachedMat('__leg__') || (() => {
-      const m = new THREE.MeshStandardMaterial({ color: 0x999999, roughness: 0.3, metalness: 0.5 });
-      _matCache.set('__leg__', m); return m;
-    })(),
-    box: _getCachedMat('__box__') || (() => {
-      const m = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.5 });
-      _matCache.set('__box__', m); return m;
-    })(),
+    radna: _getCachedMat(materialDefs.radna),
+    granc: _getCachedMat(materialDefs.granc),
+    cokla: _getCachedMat(materialDefs.cokla),
+    handle: _getOrCreateCachedMat(
+      '__handle__',
+      () => new THREE.MeshStandardMaterial({ color: 0xc0c0c0, roughness: 0.2, metalness: 0.9 }),
+    ),
+    leg: _getOrCreateCachedMat(
+      '__leg__',
+      () => new THREE.MeshStandardMaterial({ color: 0x999999, roughness: 0.3, metalness: 0.5 }),
+    ),
+    box: _getOrCreateCachedMat('__box__', () => new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.5 })),
   };
+}
 
+function _resolveMatForMesh(matKey, realMats) {
+  if (matKey && matKey.isMaterial) return matKey;
+  return realMats[matKey] || realMats.korpus;
+}
+
+function _addBoxMesh(group, b, realMats) {
+  const geo = new THREE.BoxGeometry(b.sx, b.sz, b.sy);
+  const mesh = new THREE.Mesh(geo, _resolveMatForMesh(b.matKey, realMats));
+  mesh.position.set(b.cx, b.cy, b.cz);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  group.add(mesh);
+}
+
+function _addJscadMesh(group, bufferGeo, matKey, realMats, cloneGeo) {
+  const mesh = new THREE.Mesh(cloneGeo ? bufferGeo.clone() : bufferGeo, _resolveMatForMesh(matKey, realMats));
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  group.add(mesh);
+}
+
+function _buildFromCache(group, cached, realMats) {
+  for (const b of cached.boxes) _addBoxMesh(group, b, realMats);
+  for (const { bufferGeo, matKey } of cached.threeGeos) _addJscadMesh(group, bufferGeo, matKey, realMats, true);
+}
+
+/** Sync JSCAD slow path: union geoms per material, push results to group + cacheEntry. */
+function _buildJscadSync(group, materials, realMats, cacheEntry, skipMatKeys = null) {
+  if (!materials) return;
+  for (const [matKey, geoms] of Object.entries(materials)) {
+    if (!geoms || geoms.length === 0) continue;
+    if (skipMatKeys && skipMatKeys.has(matKey)) continue;
+    const bufferGeo = geom3ToThreeGeometry(union(geoms));
+    _addJscadMesh(group, bufferGeo, matKey, realMats, false);
+    cacheEntry.threeGeos.push({ bufferGeo, matKey });
+  }
+}
+
+function _placeGroup(group, posX, posY, posZ, rotDeg) {
+  // 0.1cm Z-offset prevents z-fighting with the back wall
+  group.position.set(posX, posZ, -posY + 0.1);
+  group.rotation.y = -rotDeg * (Math.PI / 180);
+}
+
+function _runBuilder(name) {
+  const builder = BUILDERS[name];
+  if (!builder) console.warn(`No builder for module: ${name}`);
+  return builder;
+}
+
+export function buildKitchenModule(name, params, materialDefs, settings, posX, posY, posZ, rotDeg) {
+  const builder = _runBuilder(name);
+  if (!builder) return new THREE.Group();
+
+  const p = _coerceParams(params);
+  const realMats = _resolveRealMats(materialDefs);
   const group = new THREE.Group();
   group.name = name;
 
-  // ── Geometry instance cache ───────────────────────────────────────────────────
-  // Key includes name, numeric params, and settings — anything that affects shape.
-  // materialDefs are NOT in the key: materials affect appearance only, not geometry.
+  // Geometry cache key: name + numeric params + settings (materials don't affect shape)
   const cacheKey = _geomCacheKey(name, p, settings);
-  const cached = _geomCache.get(cacheKey);
+  const cached = _geomCacheGet(cacheKey);
 
   if (cached) {
-    // Cache hit: clone BoxGeometry for each box, reuse BufferGeometry for JSCAD meshes
-    for (const b of cached.boxes) {
-      const geo = new THREE.BoxGeometry(b.sx, b.sz, b.sy);
-      const mm = (b.matKey && b.matKey.isMaterial) ? b.matKey
-               : (realMats[b.matKey] || realMats.korpus);
-      const mesh = new THREE.Mesh(geo, mm);
-      mesh.position.set(b.cx, b.cy, b.cz);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      group.add(mesh);
-    }
-    for (const { bufferGeo, matKey } of cached.threeGeos) {
-      const mm = (matKey && matKey.isMaterial) ? matKey
-               : (realMats[matKey] || realMats.korpus);
-      const mesh = new THREE.Mesh(bufferGeo.clone(), mm);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      group.add(mesh);
-    }
+    _buildFromCache(group, cached, realMats);
   } else {
-    // Cache miss: run builder, convert, store results
-    const mats = { front: 'front', korpus: 'korpus', radna: 'radna', granc: 'granc', cokla: 'cokla' };
-    const raw = builder(p, mats, settings);
-
+    const raw = builder(p, _BUILDER_MATS, settings);
     const cacheEntry = { boxes: raw.boxes || [], threeGeos: [] };
-
-    // ── Fast path: boxes → direct THREE.BoxGeometry, no JSCAD union() ───────────
-    for (const b of cacheEntry.boxes) {
-      const geo = new THREE.BoxGeometry(b.sx, b.sz, b.sy);
-      const mm = (b.matKey && b.matKey.isMaterial) ? b.matKey
-               : (realMats[b.matKey] || realMats.korpus);
-      const mesh = new THREE.Mesh(geo, mm);
-      mesh.position.set(b.cx, b.cy, b.cz);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      group.add(mesh);
-    }
-
-    // ── Slow path: JSCAD geometries (cylinders, polygons) → union + convert ──────
-    if (raw.materials) {
-      for (const [matKey, geoms] of Object.entries(raw.materials)) {
-        if (!geoms || geoms.length === 0) continue;
-        const unifiedGeom = union(geoms);
-        const bufferGeo = geom3ToThreeGeometry(unifiedGeom);
-        const mm = (matKey && matKey.isMaterial) ? matKey
-                 : (realMats[matKey] || realMats.korpus);
-        const mesh = new THREE.Mesh(bufferGeo, mm);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        group.add(mesh);
-        cacheEntry.threeGeos.push({ bufferGeo, matKey });
-      }
-    }
-
+    for (const b of cacheEntry.boxes) _addBoxMesh(group, b, realMats);
+    _buildJscadSync(group, raw.materials, realMats, cacheEntry);
     _geomCacheSet(cacheKey, cacheEntry);
   }
 
-  // Apply position and rotation globally
-  // We add a tiny 0.1cm Z-offset to prevent z-fighting with the back wall
-  group.position.set(posX, posZ, -posY + 0.1);
-  group.rotation.y = -rotDeg * (Math.PI / 180);
-
+  _placeGroup(group, posX, posY, posZ, rotDeg);
   return group;
 }
 
@@ -1989,66 +2095,34 @@ export function buildKitchenModule(name, params, materialDefs, settings, posX, p
  * Returns a Promise<THREE.Group>.
  */
 export async function buildKitchenModuleAsync(name, params, materialDefs, settings, posX, posY, posZ, rotDeg) {
-  const builder = BUILDERS[name];
-  if (!builder) {
-    console.warn(`No builder for module: ${name}`);
-    return new THREE.Group();
-  }
+  const builder = _runBuilder(name);
+  if (!builder) return new THREE.Group();
 
-  const p = {};
-  for (const [k, v] of Object.entries(params)) {
-    const n = parseFloat(v);
-    p[k] = isNaN(n) ? v : n;
-  }
-
+  const p = _coerceParams(params);
   const cacheKey = _geomCacheKey(name, p, settings);
 
   // Cache hit → instant, no async needed
-  if (_geomCache.has(cacheKey)) {
+  if (_geomCacheGet(cacheKey)) {
     return buildKitchenModule(name, params, materialDefs, settings, posX, posY, posZ, rotDeg);
   }
 
-  // Cache miss — try worker for slow path
-  const mats = { front: 'front', korpus: 'korpus', radna: 'radna', granc: 'granc', cokla: 'cokla' };
-  const raw = builder(p, mats, settings);
-
-  const realMats = {
-    front:  _getCachedMat(materialDefs.front),
-    korpus: _getCachedMat(materialDefs.korpus),
-    radna:  _getCachedMat(materialDefs.radna),
-    granc:  _getCachedMat(materialDefs.granc),
-    cokla:  _getCachedMat(materialDefs.cokla),
-    handle: _getCachedMat('__handle__') || new THREE.MeshStandardMaterial({ color: 0xC0C0C0, roughness: 0.2, metalness: 0.9 }),
-    leg: _getCachedMat('__leg__') || new THREE.MeshStandardMaterial({ color: 0x999999, roughness: 0.3, metalness: 0.5 }),
-  };
-  // Ensure handle/leg are cached
-  if (!_matCache.has('__handle__')) _matCache.set('__handle__', realMats.handle);
-  if (!_matCache.has('__leg__')) _matCache.set('__leg__', realMats.leg);
+  const raw = builder(p, _BUILDER_MATS, settings);
+  const realMats = _resolveRealMats(materialDefs);
 
   const group = new THREE.Group();
   group.name = name;
   const cacheEntry = { boxes: raw.boxes || [], threeGeos: [] };
 
   // Fast path — boxes (sync, no blocking)
-  for (const b of cacheEntry.boxes) {
-    const geo = new THREE.BoxGeometry(b.sx, b.sz, b.sy);
-    const mm = (b.matKey && b.matKey.isMaterial) ? b.matKey
-             : (realMats[b.matKey] || realMats.korpus);
-    const mesh = new THREE.Mesh(geo, mm);
-    mesh.position.set(b.cx, b.cy, b.cz);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    group.add(mesh);
-  }
+  for (const b of cacheEntry.boxes) _addBoxMesh(group, b, realMats);
 
-  // Slow path — attempt worker, fall back to sync
-  const geomSpecs = raw.geomSpecs || [];
+  // Slow path — attempt worker
   const specsByMatKey = new Map();
-  for (const { matKey, spec } of geomSpecs) {
+  for (const { matKey, spec } of raw.geomSpecs || []) {
     if (!specsByMatKey.has(matKey)) specsByMatKey.set(matKey, []);
     specsByMatKey.get(matKey).push(spec);
   }
-  const workerGroups = Array.from(specsByMatKey.entries()).map(([matKey, specs]) => ({ matKey, specs }));
+  const workerGroups = Array.from(specsByMatKey, ([matKey, specs]) => ({ matKey, specs }));
 
   let workerGeos = null;
   if (workerGroups.length > 0) {
@@ -2056,55 +2130,20 @@ export async function buildKitchenModuleAsync(name, params, materialDefs, settin
   }
 
   if (workerGeos) {
-    // Worker succeeded — add worker-computed meshes, store in cache
+    const handledMatKeys = new Set();
     for (const { bufferGeo, matKey } of workerGeos) {
-      const mm = (matKey && matKey.isMaterial) ? matKey
-               : (realMats[matKey] || realMats.korpus);
-      const mesh = new THREE.Mesh(bufferGeo.clone(), mm);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      group.add(mesh);
+      _addJscadMesh(group, bufferGeo, matKey, realMats, true);
       cacheEntry.threeGeos.push({ bufferGeo, matKey });
+      handledMatKeys.add(matKey);
     }
-    // Also build any remaining JSCAD geoms that had no spec (e.g. cuboid diagonal door)
-    if (raw.materials) {
-      for (const [matKey, geoms] of Object.entries(raw.materials)) {
-        if (!geoms || geoms.length === 0) continue;
-        // Skip matKeys already handled by worker
-        if (specsByMatKey.has(matKey) && workerGeos.some(g => g.matKey === matKey)) continue;
-        const unifiedGeom = union(geoms);
-        const bufferGeo = geom3ToThreeGeometry(unifiedGeom);
-        const mm = (matKey && matKey.isMaterial) ? matKey
-                 : (realMats[matKey] || realMats.korpus);
-        const mesh = new THREE.Mesh(bufferGeo, mm);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        group.add(mesh);
-        cacheEntry.threeGeos.push({ bufferGeo, matKey });
-      }
-    }
+    // Build any leftover JSCAD geoms that had no spec (e.g. cuboid diagonal door)
+    _buildJscadSync(group, raw.materials, realMats, cacheEntry, handledMatKeys);
   } else {
-    // Worker unavailable or failed — sync JSCAD slow path
-    if (raw.materials) {
-      for (const [matKey, geoms] of Object.entries(raw.materials)) {
-        if (!geoms || geoms.length === 0) continue;
-        const unifiedGeom = union(geoms);
-        const bufferGeo = geom3ToThreeGeometry(unifiedGeom);
-        const mm = (matKey && matKey.isMaterial) ? matKey
-                 : (realMats[matKey] || realMats.korpus);
-        const mesh = new THREE.Mesh(bufferGeo, mm);
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-        group.add(mesh);
-        cacheEntry.threeGeos.push({ bufferGeo, matKey });
-      }
-    }
+    _buildJscadSync(group, raw.materials, realMats, cacheEntry);
   }
 
   _geomCacheSet(cacheKey, cacheEntry);
-
-  group.position.set(posX, posZ, -posY + 0.1);
-  group.rotation.y = -rotDeg * (Math.PI / 180);
+  _placeGroup(group, posX, posY, posZ, rotDeg);
   return group;
 }
 

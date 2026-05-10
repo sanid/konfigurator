@@ -1,4 +1,4 @@
-import { state, pendingMatSel, setPendingMatSel } from './state.js';
+import { state, pendingMatSel, setPendingMatSel, pushHistory } from './state.js';
 import { COLOR_PRESETS, TEXTURE_PRESETS } from './modules-config.js';
 import { showNotification } from './notifications.js';
 
@@ -7,7 +7,7 @@ export const MAT_LABELS = {
   korpus: 'Korpus',
   radna: 'Radna pl.',
   granc: 'Granc',
-  cokla: 'Cokla'
+  cokla: 'Cokla',
 };
 
 export function initMaterialsPanel() {
@@ -42,7 +42,7 @@ export function refreshMaterialSwatches() {
     const nameEl = document.getElementById(`matname-${key}`);
     if (swatch) {
       if (def.type === 'texture' && def.textureName) {
-        const tp = TEXTURE_PRESETS.find(t => t.name === def.textureName);
+        const tp = TEXTURE_PRESETS.find((t) => t.name === def.textureName);
         if (tp) swatch.style.background = `linear-gradient(135deg, ${tp.base} 0%, ${tp.grain} 100%)`;
       } else {
         swatch.style.backgroundColor = def.color;
@@ -54,7 +54,7 @@ export function refreshMaterialSwatches() {
 
 export function initMaterialPickerModal() {
   const colGrid = document.getElementById('mat-colors');
-  COLOR_PRESETS.forEach(cp => {
+  COLOR_PRESETS.forEach((cp) => {
     const chip = document.createElement('div');
     chip.className = 'mat-chip';
     chip.dataset.name = cp.name;
@@ -69,7 +69,7 @@ export function initMaterialPickerModal() {
     chip.appendChild(lbl);
     chip.addEventListener('click', () => {
       setPendingMatSel({ name: cp.name, color: cp.hex, type: 'color' });
-      document.querySelectorAll('.mat-chip').forEach(c => c.classList.remove('selected'));
+      document.querySelectorAll('.mat-chip').forEach((c) => c.classList.remove('selected'));
       chip.classList.add('selected');
       updateMatPreview();
     });
@@ -77,7 +77,7 @@ export function initMaterialPickerModal() {
   });
 
   const texGrid = document.getElementById('mat-textures');
-  TEXTURE_PRESETS.forEach(tp => {
+  TEXTURE_PRESETS.forEach((tp) => {
     const chip = document.createElement('div');
     chip.className = 'mat-chip';
     chip.dataset.name = tp.name;
@@ -90,27 +90,39 @@ export function initMaterialPickerModal() {
     chip.appendChild(lbl);
     chip.addEventListener('click', () => {
       setPendingMatSel({ name: tp.label, color: tp.base, textureName: tp.name, type: 'texture' });
-      document.querySelectorAll('.mat-chip').forEach(c => c.classList.remove('selected'));
+      document.querySelectorAll('.mat-chip').forEach((c) => c.classList.remove('selected'));
       chip.classList.add('selected');
       updateMatPreview();
     });
     texGrid.appendChild(chip);
   });
 
-  document.getElementById('mat-custom-color').addEventListener('input', e => {
+  document.getElementById('mat-custom-color').addEventListener('input', (e) => {
     const hex = e.target.value;
     setPendingMatSel({ name: 'Custom', color: hex, type: 'color' });
-    document.querySelectorAll('.mat-chip').forEach(c => c.classList.remove('selected'));
+    document.querySelectorAll('.mat-chip').forEach((c) => c.classList.remove('selected'));
     updateMatPreview();
   });
 
   document.getElementById('modal-mat-ok').addEventListener('click', () => {
     if (pendingMatSel && state.matPickerTarget) {
-      state.materials[state.matPickerTarget] = { ...pendingMatSel };
-      refreshMaterialSwatches();
-      import('./kitchen-builder.js').then(m => m.clearMaterialCache());
-      import('./plan-manager.js').then(m => m.rebuildAllModules());
+      pushHistory();
+      if (state.matPickerPlanIdx >= 0 && state.plan[state.matPickerPlanIdx]) {
+        const item = state.plan[state.matPickerPlanIdx];
+        if (!item.materials) item.materials = {};
+        item.materials[state.matPickerTarget] = { ...pendingMatSel };
+        import('./plan-manager.js').then((m) => {
+          m.updateModule3D(state.matPickerPlanIdx);
+          m.renderPlanList();
+        });
+      } else {
+        state.materials[state.matPickerTarget] = { ...pendingMatSel };
+        refreshMaterialSwatches();
+        import('./kitchen-builder.js').then((m) => m.clearMaterialCache());
+        import('./plan-manager.js').then((m) => m.rebuildAllModules());
+      }
     }
+    state.matPickerPlanIdx = -1;
     document.getElementById('modal-material').classList.add('hidden');
   });
 
@@ -120,13 +132,22 @@ export function initMaterialPickerModal() {
   document.querySelector('#modal-material .modal-backdrop').addEventListener('click', close);
 }
 
-export function openMaterialPicker(key) {
+export function openMaterialPicker(key, planIdx = -1) {
   state.matPickerTarget = key;
-  setPendingMatSel({ ...state.materials[key] });
-  document.getElementById('modal-mat-title').textContent = `Materijal — ${MAT_LABELS[key]}`;
-  document.querySelectorAll('.mat-chip').forEach(c => c.classList.remove('selected'));
-  const curName = state.materials[key].textureName || state.materials[key].name;
-  document.querySelectorAll(`.mat-chip[data-name="${curName}"]`).forEach(c => c.classList.add('selected'));
+  state.matPickerPlanIdx = planIdx;
+  let currentDef;
+  if (planIdx >= 0 && state.plan[planIdx]) {
+    const item = state.plan[planIdx];
+    currentDef = item.materials && item.materials[key] ? item.materials[key] : state.materials[key];
+  } else {
+    currentDef = state.materials[key];
+  }
+  setPendingMatSel({ ...currentDef });
+  const titleSuffix = planIdx >= 0 ? ` — [${planIdx + 1}] ${state.plan[planIdx].ime.replace(/_/g, ' ')}` : '';
+  document.getElementById('modal-mat-title').textContent = `Materijal — ${MAT_LABELS[key]}${titleSuffix}`;
+  document.querySelectorAll('.mat-chip').forEach((c) => c.classList.remove('selected'));
+  const curName = currentDef.textureName || currentDef.name;
+  document.querySelectorAll(`.mat-chip[data-name="${curName}"]`).forEach((c) => c.classList.add('selected'));
   updateMatPreview();
   document.getElementById('modal-material').classList.remove('hidden');
 }
@@ -136,7 +157,7 @@ export function updateMatPreview() {
   const swatch = document.getElementById('mat-preview-swatch');
   const label = document.getElementById('mat-preview-label');
   if (pendingMatSel.type === 'texture' && pendingMatSel.textureName) {
-    const tp = TEXTURE_PRESETS.find(t => t.name === pendingMatSel.textureName);
+    const tp = TEXTURE_PRESETS.find((t) => t.name === pendingMatSel.textureName);
     swatch.style.background = tp ? `linear-gradient(135deg, ${tp.base} 0%, ${tp.grain} 100%)` : '#888';
   } else {
     swatch.style.backgroundColor = pendingMatSel.color;

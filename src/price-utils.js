@@ -1,13 +1,14 @@
 import { state } from './state.js';
 import { computeCuttingList } from './cutting-list.js';
+import { computeHardwareBOM } from './hardware.js';
 
 export function initPriceInputs() {
-  ['univer', 'mdf', 'hdf', 'radna', 'kant-k', 'kant-K'].forEach(id => {
+  ['univer', 'mdf', 'hdf', 'radna', 'kant-k', 'kant-K', 'laborPct', 'marginPct'].forEach((id) => {
     const input = document.getElementById(`price-${id}`);
     if (input) {
       const stateKey = id.replace(/-/g, '_');
       input.value = state.prices[stateKey];
-      input.addEventListener('input', e => {
+      input.addEventListener('input', (e) => {
         state.prices[stateKey] = parseFloat(e.target.value) || 0;
         updateTotalCost();
       });
@@ -34,11 +35,11 @@ export function calcKant(kantStr, Lmm, Wmm) {
 
   // Pattern: N[dk] where d=length, k=width. k=thin, K=thick
   // Example: "1d i 2k", "2KK", "1d"
-  const parts = kantStr.split('i').map(s => s.trim());
-  parts.forEach(p => {
+  const parts = kantStr.split('i').map((s) => s.trim());
+  parts.forEach((p) => {
     const match = p.match(/(\d*)\s*([dDkK]+)/);
     if (match) {
-      const qty = parseInt(match[1] || "1");
+      const qty = parseInt(match[1] || '1');
       const code = match[2];
       const isShortSide = code.toLowerCase().includes('k');
       const isBig = code.includes('K');
@@ -53,10 +54,10 @@ export function calcKant(kantStr, Lmm, Wmm) {
 }
 
 export const MATERIAL_PRICE_MAP = [
-  [/RADNA PLOCA/i,  () => state.prices.radna],
-  [/UNIVER/i,       () => state.prices.univer],
-  [/\bMDF\b/i,      () => state.prices.mdf],
-  [/\bHDF\b/i,      () => state.prices.hdf],
+  [/RADNA PLOCA/i, () => state.prices.radna],
+  [/UNIVER/i, () => state.prices.univer],
+  [/\bMDF\b/i, () => state.prices.mdf],
+  [/\bHDF\b/i, () => state.prices.hdf],
 ];
 
 export function getPriceForMaterial(materialName) {
@@ -66,47 +67,101 @@ export function getPriceForMaterial(materialName) {
   return 0;
 }
 
-export function updateTotalCost() {
-  const krojna = computeCuttingList(state.plan);
-  let totalMaterial = 0;
-  let totalKant = 0;
+export function computeCostBreakdown(plan) {
+  const krojna = computeCuttingList(plan);
+  const matAgg = new Map();
+  let totalKantThin = 0;
+  let totalKantThick = 0;
 
   for (const part of krojna) {
-    // Material cost
     const area = (part.L * part.W) / 1000000;
-    const itemTotalSqm = area * part.qty;
-    totalMaterial += itemTotalSqm * getPriceForMaterial(part.material);
+    const sqm = area * part.qty;
+    const pricePerM2 = getPriceForMaterial(part.material);
+    const cost = sqm * pricePerM2;
 
-    // Kant cost
+    const existing = matAgg.get(part.material);
+    if (existing) {
+      existing.sqm += sqm;
+      existing.cost += cost;
+    } else {
+      matAgg.set(part.material, { material: part.material, sqm, pricePerM2, cost });
+    }
+
     const k = calcKant(part.kant, part.L, part.W);
-    totalKant += (k.k * state.prices.kant_k * part.qty);
-    totalKant += (k.K * state.prices.kant_K * part.qty);
+    totalKantThin += k.k * state.prices.kant_k * part.qty;
+    totalKantThick += k.K * state.prices.kant_K * part.qty;
   }
 
-  const totalEur = totalMaterial + totalKant;
-  const totalRsd = totalEur * 117;
+  const panels = [...matAgg.values()].sort((a, b) => b.cost - a.cost);
+  const totalPanels = panels.reduce((s, p) => s + p.cost, 0);
+  const totalKant = totalKantThin + totalKantThick;
+  const hwBom = computeHardwareBOM(plan);
+  const subtotal = totalPanels + totalKant + hwBom.grandTotal;
+
+  const laborPct = state.prices.laborPct || 0;
+  const marginPct = state.prices.marginPct || 0;
+  const labor = subtotal * (laborPct / 100);
+  const margin = (subtotal + labor) * (marginPct / 100);
+  const grandTotal = subtotal + labor + margin;
+
+  return {
+    panels,
+    kantThin: totalKantThin,
+    kantThick: totalKantThick,
+    totalKant,
+    hardware: hwBom.grandTotal,
+    hardwareItems: hwBom.items,
+    subtotal,
+    laborPct,
+    marginPct,
+    labor,
+    margin,
+    grandTotal,
+    grandTotalRsd: grandTotal * 117,
+  };
+}
+
+export function updateTotalCost() {
+  const bd = computeCostBreakdown(state.plan);
 
   const totalEl = document.getElementById('price-total');
   if (totalEl) {
-    totalEl.textContent = totalEur.toFixed(2) + ' €';
+    totalEl.textContent = bd.grandTotal.toFixed(2) + ' €';
   }
   const rsdEl = document.getElementById('price-total-rsd');
   if (rsdEl) {
-    rsdEl.textContent = totalRsd.toLocaleString('sr-RS') + ' RSD';
+    rsdEl.textContent = bd.grandTotalRsd.toLocaleString('sr-RS') + ' RSD';
   }
 
-  // Add breakdown if wrap exists
   const overlay = document.getElementById('price-overlay');
-  if (overlay) {
-    let breakdown = overlay.querySelector('.price-breakdown');
-    if (!breakdown) {
-      breakdown = document.createElement('div');
-      breakdown.className = 'price-breakdown';
-      breakdown.style.fontSize = '9px';
-      breakdown.style.marginTop = '4px';
-      breakdown.style.color = 'var(--text-secondary)';
-      overlay.appendChild(breakdown);
-    }
-    breakdown.innerHTML = `Mat: ${totalMaterial.toFixed(2)}€ · Kant: <span style="color:var(--accent)">${totalKant.toFixed(2)}€</span>`;
+  if (!overlay) return;
+
+  let breakdown = overlay.querySelector('.price-breakdown');
+  if (!breakdown) {
+    breakdown = document.createElement('div');
+    breakdown.className = 'price-breakdown';
+    overlay.appendChild(breakdown);
   }
+
+  const row = (label, val, cls) =>
+    `<div class="cbd-row${cls ? ' ' + cls : ''}"><span>${label}</span><span>${val}</span></div>`;
+
+  let html = '';
+  for (const p of bd.panels) {
+    html += row(p.material, p.cost.toFixed(2) + ' €');
+  }
+  html += row('Kantovanje (tanko)', bd.kantThin.toFixed(2) + ' €');
+  html += row('Kantovanje (debelo)', bd.kantThick.toFixed(2) + ' €');
+  html += row('Okov', bd.hardware.toFixed(2) + ' €');
+
+  if (bd.laborPct > 0) {
+    html += row('Rad (' + bd.laborPct + '%)', bd.labor.toFixed(2) + ' €');
+  }
+  if (bd.marginPct > 0) {
+    html += row('Marža (' + bd.marginPct + '%)', bd.margin.toFixed(2) + ' €');
+  }
+
+  html += row('UKUPNO', bd.grandTotal.toFixed(2) + ' €', 'cbd-total');
+
+  breakdown.innerHTML = html;
 }

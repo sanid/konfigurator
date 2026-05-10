@@ -1,0 +1,12 @@
+{
+  "env": { "browser": true, "es2022": true, "node": true },
+  "parserOptions": { "ecmaVersion": 2022, "sourceType": "module" },
+  "plugins": ["import"],
+  "extends": ["eslint:recommended", "prettier"],
+  "rules": {
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
+    "no-console": "off",
+    "import/no-cycle": "warn"
+  },
+  "ignorePatterns": ["dist/", "node_modules/", "legacy/", "tests/fixtures/"]
+}

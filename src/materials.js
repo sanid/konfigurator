@@ -8,12 +8,10 @@ import { COLOR_PRESETS, TEXTURE_PRESETS } from './modules-config.js';
 
 // Material cache to avoid duplicates
 const _matCache = new Map();
-const _texCache  = new Map();
+const _texCache = new Map();
 
 /** Map from named color → hex */
-export const COLOR_MAP = Object.fromEntries(
-  COLOR_PRESETS.map(c => [c.name, c.hex])
-);
+export const COLOR_MAP = Object.fromEntries(COLOR_PRESETS.map((c) => [c.name, c.hex]));
 
 /**
  * Generate a procedural wood-grain canvas texture.
@@ -24,7 +22,8 @@ function makeWoodTexture(baseHex, grainHex) {
 
   const size = 512;
   const c = document.createElement('canvas');
-  c.width = size; c.height = size;
+  c.width = size;
+  c.height = size;
   const ctx = c.getContext('2d');
 
   // Background
@@ -62,7 +61,8 @@ function makeMarbleTexture(baseHex, veinHex) {
 
   const size = 512;
   const c = document.createElement('canvas');
-  c.width = size; c.height = size;
+  c.width = size;
+  c.height = size;
   const ctx = c.getContext('2d');
 
   ctx.fillStyle = baseHex;
@@ -101,7 +101,8 @@ function makeGraniteTexture(baseHex, speckHex) {
 
   const size = 256;
   const c = document.createElement('canvas');
-  c.width = size; c.height = size;
+  c.width = size;
+  c.height = size;
   const ctx = c.getContext('2d');
 
   ctx.fillStyle = baseHex;
@@ -111,7 +112,8 @@ function makeGraniteTexture(baseHex, speckHex) {
   for (let i = 0; i < 4000; i++) {
     ctx.fillStyle = speckHex;
     ctx.globalAlpha = Math.random() * 0.5;
-    const x = Math.random() * size, y = Math.random() * size;
+    const x = Math.random() * size,
+      y = Math.random() * size;
     const r = Math.random() * 1.5;
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -140,23 +142,29 @@ export function createMaterial(def) {
   let mat;
 
   if (def.type === 'texture' && def.textureName) {
-    const tp = TEXTURE_PRESETS.find(t => t.name === def.textureName);
+    const tp = TEXTURE_PRESETS.find((t) => t.name === def.textureName);
     if (tp) {
       let map;
       if (tp.type === 'wood') {
         map = makeWoodTexture(tp.base, tp.grain);
         mat = new THREE.MeshStandardMaterial({
-          map, roughness: 0.75, metalness: 0.0
+          map,
+          roughness: 0.75,
+          metalness: 0.0,
         });
       } else if (tp.type === 'marble') {
         map = makeMarbleTexture(tp.base, tp.grain);
         mat = new THREE.MeshStandardMaterial({
-          map, roughness: 0.15, metalness: 0.05
+          map,
+          roughness: 0.15,
+          metalness: 0.05,
         });
       } else {
         map = makeGraniteTexture(tp.base, tp.grain);
         mat = new THREE.MeshStandardMaterial({
-          map, roughness: 0.85, metalness: 0.0
+          map,
+          roughness: 0.85,
+          metalness: 0.0,
         });
       }
     }
@@ -176,11 +184,16 @@ export function createMaterial(def) {
     let envMapIntensity = 0.5;
 
     if (name.includes('silver') || name.includes('steel') || name.includes('chrome')) {
-      roughness = 0.15; metalness = 0.85; envMapIntensity = 1.0;
+      roughness = 0.15;
+      metalness = 0.85;
+      envMapIntensity = 1.0;
     } else if (name.includes('gloss') || name === 'white' || name === 'black') {
-      roughness = 0.1; metalness = 0.0; envMapIntensity = 0.8;
+      roughness = 0.1;
+      metalness = 0.0;
+      envMapIntensity = 0.8;
     } else if (name.includes('wood') || name.includes('oak') || name.includes('walnut')) {
-      roughness = 0.8; metalness = 0.0;
+      roughness = 0.8;
+      metalness = 0.0;
     } else if (brightness > 0.8) {
       roughness = 0.15; // light colors tend to be gloss lacquer
     }
@@ -189,25 +202,12 @@ export function createMaterial(def) {
       color: threeColor,
       roughness,
       metalness,
-      envMapIntensity
+      envMapIntensity,
     });
   }
 
   _matCache.set(cacheKey, mat);
   return mat;
-}
-
-/**
- * Update all materials in a group to new definitions.
- */
-export function updateGroupMaterials(group, materialDefs) {
-  // This is a full rebuild; simpler approach is to re-build the module.
-  // For live updates, traverse and update color on materials.
-  group.traverse(child => {
-    if (child.isMesh && child.material) {
-      // Not trivial to remap — caller should rebuild instead.
-    }
-  });
 }
 
 /** Dispose all cached textures and materials. */

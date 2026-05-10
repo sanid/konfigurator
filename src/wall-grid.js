@@ -5,7 +5,7 @@ import { addModuleGroup, removeModuleGroup } from './viewer.js';
 export const WALL_ROWS = [
   { label: 'Z=140', z: 140, row: 0 },
   { label: 'Z=82', z: 82, row: 1 },
-  { label: 'Z=0', z: 0, row: 2 }
+  { label: 'Z=0', z: 0, row: 2 },
 ];
 export const WALL_COLS = 10;
 
@@ -48,7 +48,7 @@ export function selectCell(row, col) {
 }
 
 export function updateWallGridDisplay() {
-  document.querySelectorAll('.wall-cell').forEach(cell => {
+  document.querySelectorAll('.wall-cell').forEach((cell) => {
     const r = parseInt(cell.dataset.row);
     const c = parseInt(cell.dataset.col);
     const key = `${r},${c}`;
@@ -70,7 +70,7 @@ export function shiftRowFrom(row, fromCol) {
     const key = `${row},${c}`;
     const cell = state.occupiedCells[key];
     if (!cell) continue;
-    const planItem = state.plan.find(m => m.mat_pos && m.mat_pos[0] === row && m.mat_pos[1] === c);
+    const planItem = state.plan.find((m) => m.mat_pos && m.mat_pos[0] === row && m.mat_pos[1] === c);
     if (!planItem) continue;
     if (c <= fromCol) {
       x += cell.sirina;
@@ -79,17 +79,30 @@ export function shiftRowFrom(row, fromCol) {
       x += cell.sirina;
       const idx = state.plan.indexOf(planItem);
       try {
-        const group = buildKitchenModule(planItem.ime, planItem.p, state.materials, state.settings, planItem.pos[0], planItem.pos[1], planItem.pos[2], planItem.r);
+        const group = buildKitchenModule(
+          planItem.ime,
+          planItem.p,
+          state.materials,
+          state.settings,
+          planItem.pos[0],
+          planItem.pos[1],
+          planItem.pos[2],
+          planItem.r,
+        );
         removeModuleGroup(idx);
         addModuleGroup(idx, group);
-      } catch (e) { console.error('3D shift rebuild failed for', planItem.ime, e); }
+      } catch (e) {
+        console.error('3D shift rebuild failed for', planItem.ime, e);
+      }
     }
   }
   rebuildCountertopsForRow(row);
 }
 
 export function rebuildCountertopsForRow(row) {
-  const rowItems = state.plan.filter(m => m.mat_pos && m.mat_pos[0] === row && m.ime !== 'radna_ploca' && m.ime !== 'cokla');
+  const rowItems = state.plan.filter(
+    (m) => m.mat_pos && m.mat_pos[0] === row && m.ime !== 'radna_ploca' && m.ime !== 'cokla',
+  );
   if (rowItems.length === 0) return;
   let changed = false;
   const syncSpanning = (typeName) => {
@@ -98,7 +111,7 @@ export function rebuildCountertopsForRow(row) {
       const rpLen = parseFloat(rp.p.l) || 0;
       const rpX0 = rp.pos[0];
       const rpX1 = rpX0 + rpLen;
-      const under = rowItems.filter(m => {
+      const under = rowItems.filter((m) => {
         if (m.r !== rp.r) return false;
         const mX0 = m.pos[0];
         const mW = parseFloat(m.p.s || m.p.dss || m.sirina || 60);
@@ -106,23 +119,34 @@ export function rebuildCountertopsForRow(row) {
         return mX0 < rpX1 + 2 && mX1 > rpX0 - 2;
       });
       if (under.length === 0) return;
-      const newX0 = Math.min(...under.map(m => m.pos[0]));
-      const newX1 = Math.max(...under.map(m => m.pos[0] + parseFloat(m.p.s || m.p.dss || m.sirina || 60)));
+      const newX0 = Math.min(...under.map((m) => m.pos[0]));
+      const newX1 = Math.max(...under.map((m) => m.pos[0] + parseFloat(m.p.s || m.p.dss || m.sirina || 60)));
       const newLen = newX1 - newX0;
       if (Math.abs(newX0 - rpX0) < 0.01 && Math.abs(newLen - rpLen) < 0.01) return;
       rp.pos[0] = newX0;
       rp.p.l = String(newLen);
       try {
-        const group = buildKitchenModule(rp.ime, rp.p, state.materials, state.settings, rp.pos[0], rp.pos[1], rp.pos[2], rp.r);
+        const group = buildKitchenModule(
+          rp.ime,
+          rp.p,
+          state.materials,
+          state.settings,
+          rp.pos[0],
+          rp.pos[1],
+          rp.pos[2],
+          rp.r,
+        );
         removeModuleGroup(rpIdx);
         addModuleGroup(rpIdx, group);
-      } catch (e) { console.error(`${typeName} rebuild failed`, e); }
+      } catch (e) {
+        console.error(`${typeName} rebuild failed`, e);
+      }
       changed = true;
     });
   };
   syncSpanning('radna_ploca');
   syncSpanning('cokla');
-  if (changed) import('./plan-manager.js').then(m => m.renderPlanList());
+  if (changed) import('./plan-manager.js').then((m) => m.renderPlanList());
 }
 
 function _setPos(axis, val) {

@@ -35,7 +35,7 @@ export function snapModuleToSide(srcIdx, anchorIdx, anchorInfo, sourceInfo) {
       let angleTarget = Math.atan2(-nA.x, -nA.z);
       let angleSource = Math.atan2(nS.x, nS.z);
       let deltaRad = angleTarget - angleSource;
-      let deltaDeg = Math.round((-deltaRad * 180 / Math.PI) / 90) * 90;
+      let deltaDeg = Math.round((-deltaRad * 180) / Math.PI / 90) * 90;
       source.r = (source.r + deltaDeg) % 360;
       if (source.r < 0) source.r += 360;
       groupS.rotation.set(0, -source.r * (Math.PI / 180), 0);
@@ -45,12 +45,14 @@ export function snapModuleToSide(srcIdx, anchorIdx, anchorInfo, sourceInfo) {
     const boxA = new THREE.Box3().setFromObject(groupA);
     const boxS = new THREE.Box3().setFromObject(groupS);
 
-    let shiftX = 0, shiftY = 0, shiftZ = 0;
-    if (nA.x > 0.5)       shiftX = boxA.max.x - boxS.min.x;
+    let shiftX = 0,
+      shiftY = 0,
+      shiftZ = 0;
+    if (nA.x > 0.5) shiftX = boxA.max.x - boxS.min.x;
     else if (nA.x < -0.5) shiftX = boxA.min.x - boxS.max.x;
-    else if (nA.y > 0.5)  shiftY = boxA.max.y - boxS.min.y;
+    else if (nA.y > 0.5) shiftY = boxA.max.y - boxS.min.y;
     else if (nA.y < -0.5) shiftY = boxA.min.y - boxS.max.y;
-    else if (nA.z > 0.5)  shiftZ = boxA.max.z - boxS.min.z;
+    else if (nA.z > 0.5) shiftZ = boxA.max.z - boxS.min.z;
     else if (nA.z < -0.5) shiftZ = boxA.min.z - boxS.max.z;
 
     let nx = source.pos[0] + shiftX;
@@ -90,9 +92,9 @@ export function snapModuleToSide(srcIdx, anchorIdx, anchorInfo, sourceInfo) {
     }
 
     renderPlanList();
-    showNotification("Elementi precizno spojeni!", "success");
+    showNotification('Elementi precizno spojeni!', 'success');
   } catch (err) {
-    console.error("Snapping error:", err);
-    showNotification("Greška pri spajanju elemenata.", "error");
+    console.error('Snapping error:', err);
+    showNotification('Greška pri spajanju elemenata.', 'error');
   }
 }

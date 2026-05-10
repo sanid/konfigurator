@@ -2,254 +2,128 @@
  * app.js — Main renderer process logic
  * Meco Konfigurator 2026 — Electron/JSCAD Edition
  */
-import { MODULE_GROUPS, DEFAULT_MATERIALS, DEFAULT_SETTINGS, COLOR_PRESETS, TEXTURE_PRESETS } from './modules-config.js';
+import {
+  MODULE_GROUPS,
+  DEFAULT_MATERIALS,
+  DEFAULT_SETTINGS,
+  COLOR_PRESETS,
+  TEXTURE_PRESETS,
+} from './modules-config.js';
 import { buildKitchenModule, clearGeomCache } from './kitchen-builder.js';
 import { buildDynamicPlan, validatePresetPlan, PRESET_LAYOUTS } from './presets.js';
 import { t, setLocale } from './i18n.js';
-import { initViewer, addModuleGroup, removeModuleGroup, shiftModuleGroups, moveModuleGroup, clearAllGroups, setCameraView, resetCamera, highlightModule, resizeViewer, setViewerTheme, addFixtureMarker, removeFixtureMarker, clearFixtureMarkers, setLightingMode, getModuleIndexAt, getModuleSnapInfoAt, getModuleGroup, showMeasurements, clearMeasurements } from './viewer.js';
+import {
+  initViewer,
+  addModuleGroup,
+  removeModuleGroup,
+  shiftModuleGroups,
+  moveModuleGroup,
+  clearAllGroups,
+  setCameraView,
+  resetCamera,
+  highlightModule,
+  resizeViewer,
+  setViewerTheme,
+  addFixtureMarker,
+  removeFixtureMarker,
+  clearFixtureMarkers,
+  setLightingMode,
+  getModuleIndexAt,
+  getModuleSnapInfoAt,
+  getModuleGroup,
+  showMeasurements,
+  clearMeasurements,
+  requestRender,
+  beginDrag,
+  updateDrag,
+  endDrag,
+  isDragging,
+  setPBRMode,
+  isPBRMode,
+} from './viewer.js';
 
-import { state, isDark, setIsDark, editingPlanIdx, setEditingPlanIdx, pushHistory, _history, _clonePlanState } from './state.js';
+import {
+  state,
+  isDark,
+  setIsDark,
+  editingPlanIdx,
+  setEditingPlanIdx,
+  pushHistory,
+  _history,
+  _clonePlanState,
+} from './state.js';
 import { showNotification } from './notifications.js';
 import { initPriceInputs, updateTotalCost, calcKant, getPriceForMaterial } from './price-utils.js';
-import { initWallGrid, selectCell, updateWallGridDisplay, shiftRowFrom, rebuildCountertopsForRow, WALL_ROWS, WALL_COLS } from './wall-grid.js';
-import { initMaterialsPanel, refreshMaterialSwatches, initMaterialPickerModal, openMaterialPicker, MAT_LABELS } from './material-picker.js';
-import { autoSave, autoRestore, saveProject, loadProject } from './project-storage.js';
+import {
+  initWallGrid,
+  selectCell,
+  updateWallGridDisplay,
+  shiftRowFrom,
+  rebuildCountertopsForRow,
+  WALL_ROWS,
+  WALL_COLS,
+} from './wall-grid.js';
+import {
+  initMaterialsPanel,
+  refreshMaterialSwatches,
+  initMaterialPickerModal,
+  openMaterialPicker,
+  MAT_LABELS,
+} from './material-picker.js';
+import { autoSave, autoRestore, saveProject, loadProject, registerInitToggles } from './project-storage.js';
 import { setSnapAnchorByIndex, snapModuleToSide } from './snap.js';
-import { addSpecialElement, addRadnaPlocaToModule, addCoklaToModule, isCornerElement, CORNER_ELEMENT_NAMES } from './special-elements.js';
-import { addToPlan, deleteModule, mirrorModule, duplicateModule, clearPlan, rebuildAllModules, updateModule3D, updateModuleMeasurements, selectModuleByIndex, renderPlanList, PLAN_ICONS } from './plan-manager.js';
-import { initKrojnaModal, showKrojnaLista, exportOptimik, exportPdf, exportModuleMPR, exportAllMPR } from './exports.js';
+import {
+  addSpecialElement,
+  addRadnaPlocaToModule,
+  addCoklaToModule,
+  isCornerElement,
+  setOpenInputModal,
+  CORNER_ELEMENT_NAMES,
+} from './special-elements.js';
+import {
+  addToPlan,
+  deleteModule,
+  mirrorModule,
+  duplicateModule,
+  clearPlan,
+  rebuildAllModules,
+  updateModule3D,
+  updateModuleMeasurements,
+  selectModuleByIndex,
+  renderPlanList,
+  setUiHandlers,
+  PLAN_ICONS,
+} from './plan-manager.js';
+import {
+  initKrojnaModal,
+  showKrojnaLista,
+  exportOptimik,
+  exportPdf,
+  exportClientPdf,
+  exportModuleMPR,
+  exportAllMPR,
+} from './exports.js';
+import { getModuleIconSVG } from './module-icons.js';
+import { FIXTURE_TYPES } from './fixtures.js';
+import { PARAM_LABELS, PARAM_BOUNDS, clampParamValue, applyParamInputBounds } from './params.js';
+import { loadCustomModules, saveCustomModule, getCustomModules, deleteCustomModule } from './custom-modules.js';
+import {
+  loadTabs,
+  getPlanTabs,
+  getActiveTab,
+  addTab,
+  removeTab,
+  switchTab,
+  renameTab,
+  saveCurrentTab,
+  loadTabData,
+} from './plan-tabs.js';
 
-// ─── Wall Fixture Types ───────────────────────────────────────────────────────
-const FIXTURE_TYPES = [
-  { id: 'water', label: 'Vodovod', icon: '💧', color: 0x2196f3 },
-  { id: 'drain', label: 'Kanalizacija', icon: '🔩', color: 0x795548 },
-  { id: 'power', label: 'Struja (uticnica)', icon: '⚡', color: 0xffc107 },
-  { id: 'gas', label: 'Gas', icon: '🔥', color: 0xff5722 },
-  { id: 'window', label: 'Prozor', icon: '🪟', color: 0x90caf9 },
-  { id: 'door', label: 'Vrata', icon: '🚪', color: 0xa1887f },
-  { id: 'column', label: 'Stub', icon: '⬛', color: 0x9e9e9e },
-  { id: 'other', label: 'Ostalo', icon: '📍', color: 0xce93d8 },
-];
+// ─── Wall Fixture Types (imported from fixtures.js) ────────────────────────────
 
-// Parameter human-readable abbreviations
-const PARAM_LABELS = {
-  s:    () => t('params.s'),
-  v:    () => t('params.v'),
-  d:    () => t('params.d'),
-  c:    () => t('params.c'),
-  brvr: () => t('params.brvr'),
-  brp:  () => t('params.brp'),
-  brf:  () => t('params.brf'),
-  brfp: () => t('params.brfp'),
-  brfd: () => t('params.brfd'),
-  brv:  () => t('params.brvr'),
-  rerna: () => t('params.rerna'),
-  dss:   () => t('params.dss'),
-  sl:    () => t('params.sl'),
-  sd:    () => t('params.sd'),
-  ss:    () => t('params.ss'),
-  ds:    () => t('params.ds'),
-  vs:    () => t('params.vs')
-};
+// Parameter labels (imported from params.js)
 
-const PARAM_BOUNDS = {
-  s:    { min: 10,  max: 400 },
-  v:    { min: 10,  max: 300 },
-  d:    { min: 10,  max: 150 },
-  c:    { min: 0,   max: 30  },
-  brvr: { min: 1,   max: 8   },
-  brv:  { min: 1,   max: 8   },
-  brp:  { min: 0,   max: 10  },
-  brf:  { min: 1,   max: 8   },
-  brfp: { min: 0,   max: 8   },
-  brfd: { min: 0,   max: 8   },
-  rerna:{ min: 10,  max: 100 },
-  dss:  { min: 10,  max: 400 },
-  lss:  { min: 10,  max: 400 },
-  sl:   { min: 10,  max: 400 },
-  sd:   { min: 10,  max: 400 },
-  ss:   { min: 5,   max: 200 },
-  ds:   { min: 5,   max: 150 },
-  vs:   { min: 5,   max: 300 },
-  l:    { min: 10,  max: 600 },
-};
-
-function clampParamValue(name, val) {
-  const bounds = PARAM_BOUNDS[name] || { min: 0, max: 1000 };
-  return Math.min(bounds.max, Math.max(bounds.min, parseFloat(val) || bounds.min));
-}
-
-function applyParamInputBounds(input, name) {
-  const bounds = PARAM_BOUNDS[name] || { min: 0, max: 1000 };
-  input.min = String(bounds.min);
-  input.max = String(bounds.max);
-  input.addEventListener('blur', () => {
-    const clamped = clampParamValue(name, input.value);
-    if (String(clamped) !== input.value) input.value = clamped;
-  });
-}
-
-const MODULE_ICONS = {
-  'radni_stol': `
-    <rect x="2" y="5" width="20" height="15" rx="1"/>
-    <rect x="2" y="19" width="20" height="2" rx="1" opacity=".5"/>
-    <line x1="12" y1="5" x2="12" y2="19"/>
-    <line x1="2" y1="9" x2="22" y2="9"/>
-    <circle cx="9"  cy="14.5" r="1"/>
-    <circle cx="15" cy="14.5" r="1"/>`,
-  'gola_radni_stol': `
-    <rect x="2" y="5" width="20" height="15" rx="1"/>
-    <rect x="2" y="19" width="20" height="2" rx="1" opacity=".5"/>
-    <line x1="2" y1="9" x2="22" y2="9"/>
-    <line x1="2" y1="14" x2="22" y2="14"/>`,
-  'fiokar': `
-    <rect x="2" y="3" width="20" height="18" rx="1"/>
-    <rect x="2" y="20" width="20" height="2" rx="1" opacity=".5"/>
-    <line x1="2" y1="7.5"  x2="22" y2="7.5"/>
-    <line x1="2" y1="11.5" x2="22" y2="11.5"/>
-    <line x1="2" y1="15.5" x2="22" y2="15.5"/>
-    <line x1="7"  y1="5.5"  x2="17" y2="5.5"/>
-    <line x1="7"  y1="9.5"  x2="17" y2="9.5"/>
-    <line x1="7"  y1="13.5" x2="17" y2="13.5"/>
-    <line x1="7"  y1="17.5" x2="17" y2="17.5"/>`,
-  'fiokar_gola': `
-    <rect x="2" y="2" width="20" height="19" rx="1"/>
-    <rect x="2" y="20" width="20" height="2" rx="1" opacity=".5"/>
-    <line x1="2" y1="6.5"  x2="22" y2="6.5"/>
-    <line x1="2" y1="11"   x2="22" y2="11"/>
-    <line x1="2" y1="15.5" x2="22" y2="15.5"/>
-    <line x1="7"  y1="4.5"  x2="17" y2="4.5"/>
-    <line x1="7"  y1="9"    x2="17" y2="9"/>
-    <line x1="7"  y1="13.5" x2="17" y2="13.5"/>
-    <line x1="7"  y1="18"   x2="17" y2="18"/>`,
-  'vrata_sudo_masine': `
-    <rect x="3" y="3" width="18" height="18" rx="1"/>
-    <rect x="3" y="19" width="18" height="2" rx="1" opacity=".5"/>
-    <line x1="3" y1="7" x2="21" y2="7"/>
-    <line x1="6" y1="5" x2="18" y2="5"/>
-    <text x="12" y="15" text-anchor="middle" font-size="5" fill="currentColor" stroke="none" font-family="sans-serif">DW</text>`,
-  'vrata_sudo_masine_gola': `
-    <rect x="3" y="2" width="18" height="19" rx="1"/>
-    <rect x="3" y="20" width="18" height="2" rx="1" opacity=".5"/>
-    <line x1="3" y1="6" x2="21" y2="6"/>
-    <line x1="6" y1="4" x2="18" y2="4"/>
-    <text x="12" y="15" text-anchor="middle" font-size="5" fill="currentColor" stroke="none" font-family="sans-serif">DW</text>`,
-  'radni_stol_rerne': `
-    <rect x="2" y="3" width="20" height="18" rx="1"/>
-    <rect x="2" y="20" width="20" height="2" rx="1" opacity=".5"/>
-    <rect x="5" y="7" width="14" height="10" rx="1" opacity=".6"/>
-    <line x1="2" y1="6" x2="22" y2="6"/>
-    <line x1="5" y1="5" x2="19" y2="5"/>`,
-  'radni_stol_rerne_gola': `
-    <rect x="2" y="2" width="20" height="19" rx="1"/>
-    <rect x="2" y="20" width="20" height="2" rx="1" opacity=".5"/>
-    <rect x="5" y="6" width="14" height="10" rx="1" opacity=".6"/>
-    <line x1="2" y1="5" x2="22" y2="5"/>
-    <line x1="5" y1="4" x2="19" y2="4"/>`,
-  'radni_stol_rerne_gola_bez_fioke': `
-    <rect x="2" y="3" width="20" height="18" rx="1"/>
-    <rect x="2" y="20" width="20" height="2" rx=".5" opacity=".5"/>
-    <rect x="4" y="1" width="16" height="3" rx=".5" fill="currentColor" opacity=".3"/>
-    <circle cx="8"  cy="2.5" r="1" fill="currentColor" stroke="none"/>
-    <circle cx="16" cy="2.5" r="1" fill="currentColor" stroke="none"/>
-    <line x1="2" y1="7" x2="22" y2="7"/>`,
-  'sporet': `
-    <rect x="2" y="5" width="20" height="16" rx="1"/>
-    <rect x="4" y="3" width="16" height="3" rx=".5" opacity=".4"/>
-    <circle cx="8"  cy="4.5" r="1.2" fill="currentColor" stroke="none" opacity=".7"/>
-    <circle cx="12" cy="4.5" r="1.2" fill="currentColor" stroke="none" opacity=".7"/>
-    <circle cx="16" cy="4.5" r="1.2" fill="currentColor" stroke="none" opacity=".7"/>
-    <rect x="5" y="9" width="14" height="9" rx="1" opacity=".5"/>
-    <line x1="5" y1="8" x2="19" y2="8"/>`,
-  'samostojeci_frizider': `
-    <rect x="4" y="1" width="16" height="22" rx="1"/>
-    <line x1="4" y1="7" x2="20" y2="7"/>
-    <circle cx="18" cy="4"  r=".8" fill="currentColor" stroke="none"/>
-    <circle cx="18" cy="15" r=".8" fill="currentColor" stroke="none"/>`,
-  'radni_stol_pored_stuba': `
-    <rect x="2" y="2" width="17" height="20" rx="1"/>
-    <rect x="17" y="2" width="5" height="12" rx=".5" opacity=".3"/>
-    <line x1="2"  y1="8"  x2="19" y2="8"/>
-    <line x1="2"  y1="14" x2="19" y2="14"/>
-    <circle cx="10.5" cy="11" r="1"/>
-    <circle cx="10.5" cy="17" r="1"/>`,
-  'radni_stol_pored_stuba_gola': `
-    <rect x="2" y="2" width="17" height="20" rx="1"/>
-    <rect x="17" y="2" width="5" height="12" rx=".5" opacity=".3"/>
-    <line x1="2"  y1="8"  x2="19" y2="8"/>
-    <line x1="2"  y1="14" x2="19" y2="14"/>
-    <line x1="2"  y1="20" x2="19" y2="20" opacity=".4"/>`,
-  'dug_element_90': `
-    <polyline points="3,20 3,4 14,4 14,10 20,10 20,20 3,20"/>
-    <line x1="3"  y1="8"  x2="14" y2="8"/>
-    <line x1="14" y1="14" x2="20" y2="14"/>
-    <circle cx="8.5"  cy="14"  r="1"/>
-    <circle cx="17"   cy="12"  r="1"/>`,
-  'dug_element_90_gola': `
-    <polyline points="3,20 3,4 14,4 14,10 20,10 20,20 3,20"/>
-    <line x1="3"  y1="8"  x2="14" y2="8"/>
-    <line x1="3"  y1="14" x2="14" y2="14"/>
-    <line x1="14" y1="14" x2="20" y2="14"/>`,
-  'donji_ugaoni_element_45_sa_plocom': `
-    <polygon points="3,20 3,4 15,4 21,10 21,20"/>
-    <line x1="3" y1="8" x2="15" y2="8"/>
-    <line x1="15" y1="4" x2="21" y2="10"/>
-    <line x1="15" y1="8" x2="21" y2="10"/>`,
-  'donji_ugaoni_element_45_sa_plocom_gola': `
-    <polygon points="3,20 3,4 15,4 21,10 21,20"/>
-    <line x1="3" y1="8" x2="15" y2="8"/>
-    <line x1="3" y1="14" x2="21" y2="14"/>
-    <line x1="15" y1="4" x2="21" y2="10"/>`,
-  'klasicna_viseca': `
-    <rect x="2" y="3" width="20" height="17" rx="1"/>
-    <line x1="12" y1="3" x2="12" y2="20"/>
-    <line x1="2"  y1="9" x2="22" y2="9"/>
-    <circle cx="9"  cy="17" r="1"/>
-    <circle cx="15" cy="17" r="1"/>`,
-  'klasicna_viseca_gola': `
-    <rect x="2" y="2" width="20" height="18" rx="1"/>
-    <line x1="12" y1="2" x2="12" y2="20"/>
-    <line x1="2"  y1="7" x2="22" y2="7"/>
-    <line x1="2"  y1="13" x2="22" y2="13"/>`,
-  'klasicna_viseca_gola_ispod_grede': `
-    <rect x="2" y="5" width="20" height="15" rx="1"/>
-    <rect x="15" y="2" width="7" height="4" rx=".5" opacity=".35"/>
-    <line x1="12" y1="5" x2="12" y2="20"/>
-    <line x1="2"  y1="10" x2="22" y2="10"/>`,
-  'viseca_na_kipu': `
-    <rect x="2" y="1" width="20" height="22" rx="1"/>
-    <line x1="2" y1="12" x2="22" y2="12"/>
-    <line x1="2" y1="6"  x2="22" y2="6"/>
-    <line x1="2" y1="17" x2="22" y2="17"/>
-    <circle cx="12" cy="9.5"  r="1.2"/>
-    <circle cx="12" cy="14.5" r="1.2"/>`,
-  'viseca_na_kipu_gola': `
-    <rect x="2" y="1" width="20" height="22" rx="1"/>
-    <line x1="2" y1="12" x2="22" y2="12"/>
-    <line x1="2" y1="6"  x2="22" y2="6"/>
-    <line x1="2" y1="17" x2="22" y2="17"/>`,
-  'gue90': `
-    <polyline points="3,21 3,3 13,3 13,10 21,10 21,21 3,21"/>
-    <line x1="3"  y1="7"  x2="13" y2="7"/>
-    <line x1="3"  y1="16" x2="13" y2="16"/>
-    <line x1="13" y1="15" x2="21" y2="15"/>`,
-  'ormar_visoki': `
-    <rect x="3" y="1" width="18" height="22" rx="1"/>
-    <line x1="12" y1="1" x2="12" y2="23"/>
-    <line x1="3"  y1="6" x2="21" y2="6"/>
-    <circle cx="9"  cy="14" r="1.2"/>
-    <circle cx="15" cy="14" r="1.2"/>`,
-};
-
-const ICON_FALLBACK = `
-    <rect x="2" y="4" width="20" height="16" rx="1"/>
-    <line x1="2" y1="9" x2="22" y2="9"/>
-    <line x1="12" y1="9" x2="12" y2="20"/>`;
-
-function getModuleIconSVG(name) {
-  const paths = MODULE_ICONS[name] || ICON_FALLBACK;
-  return `<svg class="module-card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${paths}</svg>`;
-}
+// Module icons (imported from module-icons.js)
 
 const TOGGLE_LABELS = {
   front_vrata: 'Vrata',
@@ -257,7 +131,7 @@ const TOGGLE_LABELS = {
   pozadina: 'Pozadina',
   celafioka: 'Cela fioka',
   fioke: 'Fioke',
-  radna_ploca: 'Radna ploca'
+  radna_ploca: 'Radna ploca',
 };
 
 // ─── Param rebuild debounce ────────────────────────────────────────────────────
@@ -276,16 +150,22 @@ function initInputModal() {
   document.getElementById('modal-input-ok').addEventListener('click', () => {
     const val = document.getElementById('modal-input-val').value;
     document.getElementById('modal-input').classList.add('hidden');
-    if (_inputModalResolve) { _inputModalResolve(val); _inputModalResolve = null; }
+    if (_inputModalResolve) {
+      _inputModalResolve(val);
+      _inputModalResolve = null;
+    }
   });
   const cancel = () => {
     document.getElementById('modal-input').classList.add('hidden');
-    if (_inputModalResolve) { _inputModalResolve(null); _inputModalResolve = null; }
+    if (_inputModalResolve) {
+      _inputModalResolve(null);
+      _inputModalResolve = null;
+    }
   };
   document.getElementById('modal-input-cancel').addEventListener('click', cancel);
   document.getElementById('modal-input-close').addEventListener('click', cancel);
   document.querySelector('#modal-input .modal-backdrop').addEventListener('click', cancel);
-  document.getElementById('modal-input-val').addEventListener('keydown', e => {
+  document.getElementById('modal-input-val').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') document.getElementById('modal-input-ok').click();
     if (e.key === 'Escape') cancel();
   });
@@ -308,9 +188,10 @@ export function showCtxMenu(x, y, idx) {
   const menu = document.getElementById('ctx-menu');
   if (!menu) return;
   menu.classList.remove('hidden');
-  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  const mw = menu.offsetWidth,
+    mh = menu.offsetHeight;
   menu.style.left = Math.min(x, window.innerWidth - mw - 4) + 'px';
-  menu.style.top  = Math.min(y, window.innerHeight - mh - 4) + 'px';
+  menu.style.top = Math.min(y, window.innerHeight - mh - 4) + 'px';
 }
 
 function hideCtxMenu() {
@@ -321,8 +202,14 @@ function hideCtxMenu() {
 function initContextMenu() {
   const menu = document.getElementById('ctx-menu');
   if (!menu) return;
-  document.getElementById('ctx-mirror')?.addEventListener('click', () => { if (ctxTargetIdx >= 0) mirrorModule(ctxTargetIdx); hideCtxMenu(); });
-  document.getElementById('ctx-duplicate')?.addEventListener('click', () => { if (ctxTargetIdx >= 0) duplicateModule(ctxTargetIdx); hideCtxMenu(); });
+  document.getElementById('ctx-mirror')?.addEventListener('click', () => {
+    if (ctxTargetIdx >= 0) mirrorModule(ctxTargetIdx);
+    hideCtxMenu();
+  });
+  document.getElementById('ctx-duplicate')?.addEventListener('click', () => {
+    if (ctxTargetIdx >= 0) duplicateModule(ctxTargetIdx);
+    hideCtxMenu();
+  });
   document.getElementById('ctx-anchor')?.addEventListener('click', () => {
     if (ctxTargetIdx >= 0) {
       selectModuleByIndex(ctxTargetIdx);
@@ -331,9 +218,26 @@ function initContextMenu() {
     }
     hideCtxMenu();
   });
-  document.getElementById('ctx-remove')?.addEventListener('click', () => { if (ctxTargetIdx >= 0) deleteModule(ctxTargetIdx); hideCtxMenu(); });
-  document.addEventListener('click', (e) => { if (!menu.contains(e.target)) hideCtxMenu(); });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hideCtxMenu(); });
+  document.getElementById('ctx-remove')?.addEventListener('click', () => {
+    if (ctxTargetIdx >= 0) deleteModule(ctxTargetIdx);
+    hideCtxMenu();
+  });
+  document.getElementById('ctx-save-preset')?.addEventListener('click', () => {
+    if (ctxTargetIdx >= 0 && state.plan[ctxTargetIdx]) {
+      const item = state.plan[ctxTargetIdx];
+      const presetName = item.ime.replace(/_/g, ' ') + ' ' + (item.p.s || item.p.l || item.p.dss || '') + 'cm';
+      saveCustomModule(presetName, item.ime, item.p);
+      initCustomModulesUI();
+      showNotification('Preset sačuvan: ' + presetName, 'success');
+    }
+    hideCtxMenu();
+  });
+  document.addEventListener('click', (e) => {
+    if (!menu.contains(e.target)) hideCtxMenu();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hideCtxMenu();
+  });
   const canvas = document.getElementById('three-canvas');
   canvas?.addEventListener('contextmenu', (e) => {
     e.preventDefault();
@@ -341,12 +245,18 @@ function initContextMenu() {
     const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
     const ny = -((e.clientY - rect.top) / rect.height) * 2 + 1;
     const idx = getModuleIndexAt(nx, ny);
-    if (idx !== null) { selectModuleByIndex(idx); showCtxMenu(e.clientX, e.clientY, idx); }
+    if (idx !== null) {
+      selectModuleByIndex(idx);
+      showCtxMenu(e.clientX, e.clientY, idx);
+    }
   });
 }
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  setUiHandlers({ refreshParams, refreshParamsForPlanItem, showCtxMenu });
+  setOpenInputModal(openInputModal);
+  registerInitToggles(initToggles);
   initTitlebarControls();
   initViewer(document.getElementById('three-canvas'));
   setViewerTheme('light');
@@ -372,8 +282,12 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('resize', resizeViewer);
 
   let snapAnchor = null;
-  window._setSnapAnchor = (info) => { snapAnchor = info; };
-  window._clearSnapAnchor = () => { snapAnchor = null; };
+  window._setSnapAnchor = (info) => {
+    snapAnchor = info;
+  };
+  window._clearSnapAnchor = () => {
+    snapAnchor = null;
+  };
 
   const canvas = document.getElementById('three-canvas');
   if (canvas) {
@@ -391,7 +305,7 @@ document.addEventListener('DOMContentLoaded', () => {
           if (!snapAnchor) {
             snapAnchor = snapInfo;
             selectModuleByIndex(snapInfo.index);
-            showNotification("Sidro postavljeno. Klikni na element koji zelis spojiti.", "info");
+            showNotification('Sidro postavljeno. Klikni na element koji zelis spojiti.', 'info');
           } else {
             const sourceIdx = snapInfo.index;
             if (sourceIdx !== snapAnchor.index) {
@@ -407,11 +321,64 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    canvas.addEventListener('click', (e) => {
+    // ─── Click / Drag / Shift-select ────────────────────────────────────────
+    let _pointerDownIdx = -1;
+    let _pointerDownPos = { x: 0, y: 0 };
+    let _didDrag = false;
+
+    canvas.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
       const rect = canvas.getBoundingClientRect();
-      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-      const idx = getModuleIndexAt(x, y);
+      const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ny = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      _pointerDownIdx = getModuleIndexAt(nx, ny);
+      _pointerDownPos = { x: e.clientX, y: e.clientY };
+      _didDrag = false;
+
+      if (_pointerDownIdx >= 0) {
+        beginDrag(_pointerDownIdx, nx, ny, (worldX, worldZ) => {
+          const item = state.plan[_pointerDownIdx];
+          if (!item) return;
+          pushHistory();
+          item.pos[0] = Math.round(worldX);
+          item.pos[1] = Math.round(-worldZ);
+          setPos('x', item.pos[0]);
+          setPos('y', item.pos[1]);
+          if (item.mat_pos) {
+            const [row, col] = item.mat_pos;
+            const key = `${row},${col}`;
+            if (state.occupiedCells[key]) state.occupiedCells[key].sirina = item.sirina;
+          }
+          renderPlanList();
+          autoSave();
+        });
+      }
+    });
+
+    canvas.addEventListener('pointermove', (e) => {
+      if (!isDragging()) return;
+      const rect = canvas.getBoundingClientRect();
+      const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ny = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+      const dx = e.clientX - _pointerDownPos.x;
+      const dy = e.clientY - _pointerDownPos.y;
+      if (Math.abs(dx) > 4 || Math.abs(dy) > 4) _didDrag = true;
+
+      updateDrag(nx, ny);
+    });
+
+    canvas.addEventListener('pointerup', (e) => {
+      if (isDragging()) {
+        endDrag();
+        if (_didDrag) return;
+      }
+
+      const rect = canvas.getBoundingClientRect();
+      const nx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const ny = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const idx = getModuleIndexAt(nx, ny);
+
       if (idx === null) {
         if (state.selectedPlanIdx !== -1) {
           state.selectedPlanIdx = -1;
@@ -422,6 +389,8 @@ document.addEventListener('DOMContentLoaded', () => {
           refreshParams();
           renderPlanList();
         }
+      } else if (e.shiftKey && state.selectedPlanIdx >= 0) {
+        selectModuleByIndex(idx);
       } else {
         selectModuleByIndex(idx);
       }
@@ -429,6 +398,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   autoRestore();
+
+  loadCustomModules();
+  loadTabs();
+  initCustomModulesUI();
+  initPlanTabs();
+  initTour();
 });
 
 // ─── Title bar ────────────────────────────────────────────────────────────────
@@ -442,11 +417,13 @@ function initTitlebarControls() {
     setIsDark(!isDark);
     if (isDark) {
       document.body.classList.remove('light');
-      themeBtn.textContent = '🌙 Light';
+      themeBtn.textContent = '☀';
+      themeBtn.title = 'Switch to light mode';
       setViewerTheme('dark');
     } else {
       document.body.classList.add('light');
-      themeBtn.textContent = '☁️ Dark';
+      themeBtn.textContent = '🌙';
+      themeBtn.title = 'Switch to dark mode';
       setViewerTheme('light');
     }
   });
@@ -461,9 +438,15 @@ function initOverlayToggles() {
   const isPinned = localStorage.getItem('wallGridPinned') === 'true';
   const isCollapsed = localStorage.getItem('wallGridCollapsed') === 'true';
   pinCheckbox.checked = isPinned;
-  if (isPinned) { wallPanel.classList.remove('collapsed'); toggleBtn.textContent = '▼'; }
-  else if (isCollapsed) { wallPanel.classList.add('collapsed'); toggleBtn.textContent = '▲'; }
-  else { toggleBtn.textContent = '▼'; }
+  if (isPinned) {
+    wallPanel.classList.remove('collapsed');
+    toggleBtn.textContent = '▼';
+  } else if (isCollapsed) {
+    wallPanel.classList.add('collapsed');
+    toggleBtn.textContent = '▲';
+  } else {
+    toggleBtn.textContent = '▼';
+  }
 
   toggleBtn.addEventListener('click', () => {
     const collapsed = wallPanel.classList.toggle('collapsed');
@@ -472,7 +455,10 @@ function initOverlayToggles() {
   });
   pinCheckbox.addEventListener('change', () => {
     localStorage.setItem('wallGridPinned', pinCheckbox.checked);
-    if (pinCheckbox.checked) { wallPanel.classList.remove('collapsed'); toggleBtn.textContent = '▼'; }
+    if (pinCheckbox.checked) {
+      wallPanel.classList.remove('collapsed');
+      toggleBtn.textContent = '▼';
+    }
   });
 
   const measureBtn = document.getElementById('btn-measure');
@@ -489,282 +475,363 @@ function initOverlayToggles() {
 
 function initPresetModal() {
   const btnPresets = document.getElementById('btn-presets');
-  const modal      = document.getElementById('modal-presets');
-  const closeBtn   = document.getElementById('modal-presets-close');
-  const cancelBtn  = document.getElementById('modal-presets-cancel');
-  const addBtn     = document.getElementById('preset-add-btn');
-  const step1      = document.getElementById('preset-step1');
-  const step2      = document.getElementById('preset-step2');
-  const grid       = document.getElementById('presets-grid');
-  const backBtn    = document.getElementById('preset-back-btn');
-  const titleEl    = document.getElementById('preset-step2-title');
-  const layoutWrap = document.getElementById('preset-layout-wrap');
-  const tooltip    = document.getElementById('preset-mod-tooltip');
-  const tooltipList= document.getElementById('preset-mod-tooltip-list');
-  const sideWrap   = document.getElementById('preset-side-wrap');
+  const modal = document.getElementById('modal-presets');
+  if (!btnPresets || !modal) return;
+
+  const closeBtn = document.getElementById('modal-presets-close');
+  const cancelBtn = document.getElementById('modal-presets-cancel');
+  const addBtn = document.getElementById('preset-add-btn');
+  const shapePillsEl = document.getElementById('presets-grid');
+  const planView = document.getElementById('preset-layout-wrap');
+  const tooltip = document.getElementById('preset-mod-tooltip');
+  const tooltipList = document.getElementById('preset-mod-tooltip-list');
+  const sideWrap = document.getElementById('preset-side-wrap');
   const countsWrap = document.getElementById('preset-counts-wrap');
-  const leftCountWrap  = document.getElementById('preset-left-count-wrap');
+  const leftCountWrap = document.getElementById('preset-left-count-wrap');
   const rightCountWrap = document.getElementById('preset-right-count-wrap');
-  if (!btnPresets || !modal || !grid) return;
+  const widthInput = document.getElementById('preset-width-main');
+  const golaInput = document.getElementById('preset-gola');
+  const leftCountInput = document.getElementById('preset-left-count');
+  const rightCountInput = document.getElementById('preset-right-count');
+  const previewHint = document.getElementById('preset-preview-hint');
 
   // ── state ──────────────────────────────────────────────────────────────────
-  let activePresetId = null;
-  let activeSide = 'left'; // for l-shape: which side has the corner
-  // slotModules: maps slotKey → module name (for overridable slots)
+  let activePresetId = 'galley';
+  let activeSide = 'left';
   let slotModules = {};
 
-  // ── helpers ────────────────────────────────────────────────────────────────
+  const CORNER_NAMES = new Set([
+    'dug_element_90',
+    'dug_element_90_gola',
+    'dug_element_90_desni',
+    'dug_element_90_desni_gola',
+  ]);
+  const SHAPE_ICONS = {
+    galley:
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="9" width="18" height="6" rx="1"/></svg>',
+    'l-shape':
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 5h18M3 5v14M3 19h6M3 5v14"/><rect x="3" y="5" width="18" height="4" rx="0.5" fill="currentColor" opacity="0.18"/><rect x="3" y="9" width="4" height="10" rx="0.5" fill="currentColor" opacity="0.18"/></svg>',
+    'u-shape':
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="4" rx="0.5" fill="currentColor" opacity="0.18"/><rect x="3" y="9" width="4" height="10" rx="0.5" fill="currentColor" opacity="0.18"/><rect x="17" y="9" width="4" height="10" rx="0.5" fill="currentColor" opacity="0.18"/></svg>',
+  };
+  const SHAPE_LABELS = { galley: 'Hodnik', 'l-shape': 'L-oblik', 'u-shape': 'U-oblik' };
+
   function getOpts() {
     return {
-      isGola:     document.getElementById('preset-gola').checked,
-      width:      parseFloat(document.getElementById('preset-width-main').value) || 300,
-      side:       activeSide,
-      leftCount:  parseInt(document.getElementById('preset-left-count').value) || 2,
-      rightCount: parseInt(document.getElementById('preset-right-count').value) || 2,
+      isGola: golaInput.checked,
+      width: parseFloat(widthInput.value) || 300,
+      side: activeSide,
+      leftCount: parseInt(leftCountInput.value) || 2,
+      rightCount: parseInt(rightCountInput.value) || 2,
     };
   }
 
-  // All "Donji" module names (excluding corner types which are auto-placed)
-  const CORNER_NAMES = new Set(['dug_element_90', 'dug_element_90_gola', 'dug_element_90_desni', 'dug_element_90_desni_gola']);
   function getDonjiFlatList() {
-    return Object.keys(MODULE_GROUPS['Donji'] || {}).filter(n => !CORNER_NAMES.has(n));
+    return Object.keys(MODULE_GROUPS['Donji'] || {}).filter((n) => !CORNER_NAMES.has(n));
   }
 
-  // ── step navigation ─────────────────────────────────────────────────────────
-  function showStep1() {
-    step1.classList.remove('hidden');
-    step2.classList.add('hidden');
-    addBtn.style.display = 'none';
-    hideTooltip();
-  }
-  function showStep2(preset) {
-    activePresetId = preset.id;
-    titleEl.textContent = preset.title;
-    step1.classList.add('hidden');
-    step2.classList.remove('hidden');
-    addBtn.style.display = '';
-    // show/hide side options
-    const hasSides = preset.id !== 'galley';
-    sideWrap.style.display = hasSides ? '' : 'none';
-    countsWrap.style.display = hasSides ? '' : 'none';
-    // for u-shape both sides shown; for l-shape only one side shown
-    // (left-count = left side, right-count = right side)
-    leftCountWrap.style.display  = (preset.id === 'u-shape' || (preset.id === 'l-shape' && activeSide === 'left')) ? '' : 'none';
-    rightCountWrap.style.display = (preset.id === 'u-shape' || (preset.id === 'l-shape' && activeSide === 'right')) ? '' : 'none';
-    slotModules = {};
-    renderLayout();
-  }
-
-  // ── shape grid (step 1) ────────────────────────────────────────────────────
-  grid.innerHTML = '';
+  // ── shape pills ────────────────────────────────────────────────────────────
+  shapePillsEl.innerHTML = '';
   for (const preset of PRESET_LAYOUTS) {
-    const card = document.createElement('div');
-    card.className = 'preset-card';
-    card.innerHTML = `${preset.svg}<div class="preset-card-title">${preset.title}</div><div class="preset-card-desc">${preset.desc.replace(/\n/g, '<br>')}</div>`;
-    card.addEventListener('click', () => showStep2(preset));
-    grid.appendChild(card);
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'pp-shape-pill';
+    pill.dataset.shape = preset.id;
+    pill.setAttribute('role', 'radio');
+    pill.innerHTML = `${SHAPE_ICONS[preset.id] || ''}<span class="pp-shape-pill-label">${SHAPE_LABELS[preset.id] || preset.title}</span>`;
+    pill.addEventListener('click', () => selectShape(preset.id));
+    shapePillsEl.appendChild(pill);
   }
 
-  // ── side toggle ────────────────────────────────────────────────────────────
-  document.querySelectorAll('.preset-side-btn').forEach(btn => {
+  function selectShape(id) {
+    activePresetId = id;
+    shapePillsEl.querySelectorAll('.pp-shape-pill').forEach((p) => {
+      const active = p.dataset.shape === id;
+      p.classList.toggle('active', active);
+      p.setAttribute('aria-checked', active ? 'true' : 'false');
+    });
+    updateOptionVisibility();
+    slotModules = {};
+    renderPlanView();
+  }
+
+  function updateOptionVisibility() {
+    const isGalley = activePresetId === 'galley';
+    sideWrap.style.display = isGalley ? 'none' : '';
+    countsWrap.style.display = isGalley ? 'none' : '';
+    if (activePresetId === 'l-shape') {
+      leftCountWrap.style.display = activeSide === 'left' ? '' : 'none';
+      rightCountWrap.style.display = activeSide === 'right' ? '' : 'none';
+    } else if (activePresetId === 'u-shape') {
+      leftCountWrap.style.display = '';
+      rightCountWrap.style.display = '';
+    }
+  }
+
+  // ── side toggle (Lijevo/Desno) ─────────────────────────────────────────────
+  document.querySelectorAll('.preset-side-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       activeSide = btn.dataset.side;
-      document.querySelectorAll('.preset-side-btn').forEach(b => b.classList.toggle('active', b.dataset.side === activeSide));
-      // update which count inputs are shown for l-shape
-      if (activePresetId === 'l-shape') {
-        leftCountWrap.style.display  = activeSide === 'left'  ? '' : 'none';
-        rightCountWrap.style.display = activeSide === 'right' ? '' : 'none';
-      }
+      document
+        .querySelectorAll('.preset-side-btn')
+        .forEach((b) => b.classList.toggle('active', b.dataset.side === activeSide));
+      updateOptionVisibility();
       slotModules = {};
-      renderLayout();
+      renderPlanView();
     });
   });
 
-  // re-render on any option change
-  ['preset-gola', 'preset-width-main', 'preset-left-count', 'preset-right-count'].forEach(id => {
-    document.getElementById(id).addEventListener('change', () => { slotModules = {}; renderLayout(); });
+  // ── steppers (+/−) ─────────────────────────────────────────────────────────
+  document.querySelectorAll('.pp-stepper-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const target = document.getElementById(btn.dataset.target);
+      if (!target) return;
+      const step = parseInt(btn.dataset.step, 10) || 1;
+      const min = parseInt(target.min, 10) || 1;
+      const max = parseInt(target.max, 10) || 99;
+      const next = Math.max(min, Math.min(max, (parseInt(target.value, 10) || min) + step));
+      if (String(next) !== target.value) {
+        target.value = String(next);
+        slotModules = {};
+        renderPlanView();
+      }
+    });
   });
 
-  // ── layout renderer ─────────────────────────────────────────────────────────
-  // A "slot" is a clickable cabinet cell. Each has a key like "main-2" or "left-1".
-  // We describe the grid as rows of slot descriptors:
-  //   { key, type: 'corner'|'cabinet'|'empty', label, widthCm }
-  function buildSlotRows() {
-    const opts = getOpts();
-    const { isGola, width, side, leftCount, rightCount } = opts;
+  // Re-render on width / gola change
+  widthInput.addEventListener('input', () => {
+    slotModules = {};
+    renderPlanView();
+  });
+  golaInput.addEventListener('change', () => {
+    slotModules = {};
+    renderPlanView();
+  });
+
+  // ── slot model ─────────────────────────────────────────────────────────────
+  // Each slot: { key, type: 'corner'|'cabinet', defaultIme, widthCm }
+  function buildSlotModel() {
+    const { isGola, width, side, leftCount, rightCount } = getOpts();
     const dss = isGola ? 100 : 80;
-    const lss = isGola ? 80  : 90;
-    const sw  = 60;
+    const lss = isGola ? 80 : 90;
+    const sw = 60;
     const suf = isGola ? '_gola' : '';
 
-    // main wall fills: compute count & widths
-    function mainSlots(startX, wallLen) {
+    function mainCabinets(wallLen, keyPrefix = 'main') {
       const count = Math.max(1, Math.floor(wallLen / sw));
       const remainder = wallLen - (count - 1) * sw;
-      const slots = [];
+      const out = [];
       for (let i = 0; i < count; i++) {
-        const w = (i === count - 1) ? remainder : sw;
+        const w = i === count - 1 ? remainder : sw;
         const isMiddle = count > 1 && i === Math.floor(count / 2);
-        const key = `main-${i}`;
-        slots.push({ key, type: 'cabinet', defaultIme: isMiddle ? 'fiokar' + suf : 'radni_stol' + suf, widthCm: w });
+        out.push({
+          key: `${keyPrefix}-${i}`,
+          type: 'cabinet',
+          defaultIme: isMiddle ? 'fiokar' + suf : 'radni_stol' + suf,
+          widthCm: w,
+        });
       }
-      return slots;
+      return out;
     }
+    function sideCabinets(prefix, count) {
+      const out = [];
+      for (let i = 0; i < count; i++) {
+        out.push({ key: `${prefix}-${i}`, type: 'cabinet', defaultIme: 'radni_stol' + suf, widthCm: sw });
+      }
+      return out;
+    }
+
+    const cornerLeft = { key: 'corner-l', type: 'corner', label: 'L', widthCm: dss, isGola };
+    const cornerRight = { key: 'corner-r', type: 'corner', label: 'L', widthCm: dss, isGola };
 
     if (activePresetId === 'galley') {
-      const main = mainSlots(0, width);
-      return [
-        { label: 'Glavna strana', slots: main }
-      ];
+      return { shape: 'galley', main: mainCabinets(width), left: [], right: [] };
     }
-
     if (activePresetId === 'l-shape') {
       if (side === 'right') {
-        const main = mainSlots(0, width - dss);
-        main.push({ key: 'corner-r', type: 'corner', label: '⌐', widthCm: dss });
-        const sideSlots = [];
-        for (let i = 0; i < rightCount; i++) sideSlots.push({ key: `right-${i}`, type: 'cabinet', defaultIme: 'radni_stol' + suf, widthCm: sw });
-        // spacer fills the space under main-wall cabinets (all but last corner slot)
-        const mainNonCornerPx = main.slice(0, -1).reduce((a, s) => a + slotWidthPx(s.widthCm) + 4, 0);
-        const sidePx = sideSlots.reduce((a, s) => a + slotWidthPx(s.widthCm) + 4, 0);
-        const spacerPx = Math.max(0, mainNonCornerPx - sidePx);
-        return [
-          { label: 'Glavna strana', slots: main },
-          { label: 'Desna strana', slots: [{ key: 'spacer-r', type: 'empty', _px: spacerPx }, ...sideSlots] }
-        ];
-      } else {
-        const main = [{ key: 'corner-l', type: 'corner', label: '⌐', widthCm: dss }, ...mainSlots(dss, width - dss)];
-        const sideSlots = [];
-        for (let i = 0; i < leftCount; i++) sideSlots.push({ key: `left-${i}`, type: 'cabinet', defaultIme: 'radni_stol' + suf, widthCm: sw });
-        const mainNonCornerPx = main.slice(1).reduce((a, s) => a + slotWidthPx(s.widthCm) + 4, 0);
-        const sidePx = sideSlots.reduce((a, s) => a + slotWidthPx(s.widthCm) + 4, 0);
-        const spacerPx = Math.max(0, mainNonCornerPx - sidePx);
-        return [
-          { label: 'Glavna strana', slots: main },
-          { label: 'Lijeva strana', slots: [...sideSlots, { key: 'spacer-l', type: 'empty', _px: spacerPx }] }
-        ];
+        return {
+          shape: 'l-right',
+          main: [...mainCabinets(width - dss), cornerRight],
+          left: [],
+          right: sideCabinets('right', rightCount),
+        };
       }
+      return {
+        shape: 'l-left',
+        main: [cornerLeft, ...mainCabinets(width - dss)],
+        left: sideCabinets('left', leftCount),
+        right: [],
+      };
     }
-
     if (activePresetId === 'u-shape') {
-      const mainWallLen = width - dss - lss;
-      const main = [
-        { key: 'corner-l', type: 'corner', label: '⌐', widthCm: dss },
-        ...mainSlots(dss, mainWallLen),
-        { key: 'corner-r', type: 'corner', label: '⌐', widthCm: lss }
-      ];
-      const leftSide = [], rightSide = [];
-      for (let i = 0; i < leftCount; i++) leftSide.push({ key: `left-${i}`, type: 'cabinet', defaultIme: 'radni_stol' + suf, widthCm: sw });
-      for (let i = 0; i < rightCount; i++) rightSide.push({ key: `right-${i}`, type: 'cabinet', defaultIme: 'radni_stol' + suf, widthCm: sw });
-      // spacer fills the middle (between left side and right side) matching the inner main-wall width
-      const mainInnerPx = main.slice(1, -1).reduce((a, s) => a + slotWidthPx(s.widthCm) + 4, 0);
-      const leftPx  = leftSide.reduce((a, s) => a + slotWidthPx(s.widthCm) + 4, 0);
-      const rightPx = rightSide.reduce((a, s) => a + slotWidthPx(s.widthCm) + 4, 0);
-      const spacerPx = Math.max(0, mainInnerPx - leftPx - rightPx);
-      return [
-        { label: 'Glavna strana', slots: main },
-        { label: 'Lijevo / Desno', slots: [...leftSide, { key: 'spacer-m', type: 'empty', _px: spacerPx }, ...rightSide] }
-      ];
+      return {
+        shape: 'u',
+        main: [cornerLeft, ...mainCabinets(width - dss - lss), cornerRight],
+        left: sideCabinets('left', leftCount),
+        right: sideCabinets('right', rightCount),
+      };
+    }
+    return { shape: 'galley', main: [], left: [], right: [] };
+  }
+
+  // ── plan-view renderer (top-down kitchen blueprint) ────────────────────────
+  // Main wall is a horizontal row at top. Side walls are vertical columns
+  // descending from the corners. This matches how a real kitchen plan looks.
+  const PX_PER_CM = 0.55;
+  const SLOT_DEPTH_PX = 44;
+  const SLOT_GAP = 3;
+  function pxFromCm(cm) {
+    return Math.max(28, Math.round(cm * PX_PER_CM));
+  }
+
+  function renderPlanView() {
+    hideTooltip();
+    planView.innerHTML = '';
+    const model = buildSlotModel();
+    const moduleList = getDonjiFlatList();
+
+    // Compute total main wall pixel width for layout sizing
+    const mainPx = model.main.reduce((a, s) => a + pxFromCm(s.widthCm), 0) + (model.main.length - 1) * SLOT_GAP;
+
+    // Container scale: if main wall too wide, scale down
+    const containerInnerWidth = Math.min(planView.clientWidth || 700, 800);
+    const scale = mainPx > 0 && mainPx > containerInnerWidth - 40 ? (containerInnerWidth - 40) / mainPx : 1;
+
+    // Stage div sized to the (possibly scaled) main wall width
+    const stage = document.createElement('div');
+    stage.className = 'pp-stage';
+    stage.style.width = Math.round(mainPx * scale) + 'px';
+    stage.style.minHeight = model.left.length || model.right.length ? '220px' : '90px';
+    planView.appendChild(stage);
+
+    // Wall lines (decorative — back wall behind main row, side walls along sides)
+    const wallTop = document.createElement('div');
+    wallTop.className = 'pp-wall pp-wall-top';
+    stage.appendChild(wallTop);
+    if (model.left.length || model.shape === 'l-left' || model.shape === 'u') {
+      const w = document.createElement('div');
+      w.className = 'pp-wall pp-wall-left';
+      stage.appendChild(w);
+    }
+    if (model.right.length || model.shape === 'l-right' || model.shape === 'u') {
+      const w = document.createElement('div');
+      w.className = 'pp-wall pp-wall-right';
+      stage.appendChild(w);
     }
 
-    return [];
-  }
-
-  const PX_PER_CM = 0.8; // visual scale factor
-  function slotWidthPx(widthCm) {
-    return Math.max(36, Math.round(widthCm * PX_PER_CM));
-  }
-  function rowTotalPx(slots) {
-    // 28px label + 32px row-label offset, then sum of slot widths + 4px gap per slot
-    return slots.reduce((acc, s) => acc + slotWidthPx(s.widthCm) + 4, 0);
-  }
-
-  function renderLayout() {
-    if (!activePresetId) return;
-    hideTooltip();
-    layoutWrap.innerHTML = '';
-    const rows = buildSlotRows();
-    const donjiFlatList = getDonjiFlatList();
-
-    rows.forEach(({ label, slots }) => {
-      const rowDiv = document.createElement('div');
-      rowDiv.className = 'preset-layout-row';
-
-      const rowLabel = document.createElement('div');
-      rowLabel.className = 'preset-layout-row-label';
-      rowLabel.textContent = label;
-      rowDiv.appendChild(rowLabel);
-
-      slots.forEach(slot => {
-        const el = document.createElement('div');
-        const px = slot._px != null ? slot._px : slotWidthPx(slot.widthCm || 60);
-        el.style.width = px + 'px';
-
-        if (slot.type === 'empty') {
-          el.className = 'preset-slot empty-space';
-          if (px <= 0) { return; } // skip zero-width spacers
-          rowDiv.appendChild(el);
-          return;
-        }
-
-        if (slot.type === 'corner') {
-          el.className = 'preset-slot corner';
-          el.textContent = slot.label || 'L';
-          el.title = 'Ugaoni element (fiksno)';
-          rowDiv.appendChild(el);
-          return;
-        }
-
-        // cabinet slot
-        el.className = 'preset-slot';
-        const currentIme = slotModules[slot.key] || slot.defaultIme;
-        const shortName = currentIme.replace(/_gola$/, '').replace(/_/g, ' ');
-        el.innerHTML = `<span class="preset-slot-name">${shortName}</span><span class="preset-slot-width">${slot.widthCm}cm</span>`;
-        el.dataset.slotKey = slot.key;
-        el.dataset.defaultIme = slot.defaultIme;
-
-        el.addEventListener('click', (e) => {
-          e.stopPropagation();
-          openSlotTooltip(el, slot, donjiFlatList);
-        });
-
-        rowDiv.appendChild(el);
-      });
-
-      layoutWrap.appendChild(rowDiv);
+    // Main wall row
+    const mainRow = document.createElement('div');
+    mainRow.className = 'pp-main-row';
+    mainRow.style.transform = `scale(${scale})`;
+    let cabinetCount = 0;
+    model.main.forEach((slot) => {
+      mainRow.appendChild(makeSlotEl(slot, moduleList, 'main'));
+      if (slot.type === 'cabinet') cabinetCount++;
     });
+    stage.appendChild(mainRow);
+
+    // Find x-offset of corners in the main row (used to position side walls)
+    const cornerLeftSlot = model.main.find((s) => s.key === 'corner-l');
+    const cornerRightSlot = model.main.find((s) => s.key === 'corner-r');
+
+    // Side walls: vertical, anchored to inside edge of corner
+    if (model.left.length > 0) {
+      const sideCol = document.createElement('div');
+      sideCol.className = 'pp-side-col pp-side-left';
+      // anchor: just inside the left corner. For l-left, corner is first.
+      // The side cabinets' BACK is at x=0 (left wall), so column starts at left edge.
+      sideCol.style.top = SLOT_DEPTH_PX + SLOT_GAP + 'px';
+      sideCol.style.left = '0px';
+      model.left.forEach((slot) => sideCol.appendChild(makeSlotEl(slot, moduleList, 'side')));
+      stage.appendChild(sideCol);
+      cabinetCount += model.left.length;
+    }
+    if (model.right.length > 0) {
+      const sideCol = document.createElement('div');
+      sideCol.className = 'pp-side-col pp-side-right';
+      sideCol.style.top = SLOT_DEPTH_PX + SLOT_GAP + 'px';
+      sideCol.style.right = '0px';
+      model.right.forEach((slot) => sideCol.appendChild(makeSlotEl(slot, moduleList, 'side')));
+      stage.appendChild(sideCol);
+      cabinetCount += model.right.length;
+    }
+
+    // Hint line below preview
+    const opts = getOpts();
+    const totalCm = opts.width;
+    const elementsTxt = `${cabinetCount} ${cabinetCount === 1 ? 'element' : 'elemenata'}`;
+    previewHint.textContent = `${SHAPE_LABELS[activePresetId]} · glavni zid ${totalCm}cm · ${elementsTxt}`;
   }
 
-  // ── module picker tooltip ──────────────────────────────────────────────────
+  function makeSlotEl(slot, moduleList, orientation /* 'main' | 'side' */) {
+    const el = document.createElement('div');
+    el.className = 'pp-slot pp-slot-' + orientation;
+    if (slot.type === 'corner') {
+      el.classList.add('corner');
+      el.title = `Ugaoni element (${slot.widthCm}cm × ${slot.isGola ? 80 : 90}cm, fiksno)`;
+      el.innerHTML = `<span class="pp-slot-corner-icon">⌐</span>`;
+      // Corner takes its full cm-width on main row; on side wall the vertical slot is fixed
+      if (orientation === 'main') {
+        el.style.width = pxFromCm(slot.widthCm) + 'px';
+        el.style.height = SLOT_DEPTH_PX + 'px';
+      }
+      return el;
+    }
+    // cabinet
+    const currentIme = slotModules[slot.key] || slot.defaultIme;
+    const shortName = currentIme.replace(/_gola$/, '').replace(/_/g, ' ');
+    el.dataset.slotKey = slot.key;
+    el.innerHTML = `<span class="pp-slot-name">${shortName}</span><span class="pp-slot-dim">${slot.widthCm}cm</span>`;
+    if (orientation === 'main') {
+      el.style.width = pxFromCm(slot.widthCm) + 'px';
+      el.style.height = SLOT_DEPTH_PX + 'px';
+    } else {
+      // Side: fixed inner dimensions; cm shown in label
+      el.style.width = SLOT_DEPTH_PX + 'px';
+      el.style.height = pxFromCm(slot.widthCm) + 'px';
+    }
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openSlotPicker(el, slot, moduleList);
+    });
+    return el;
+  }
+
+  // ── module picker popover ──────────────────────────────────────────────────
   let activeSlotKey = null;
 
-  function openSlotTooltip(el, slot, moduleList) {
-    if (activeSlotKey === slot.key) { hideTooltip(); return; }
+  function openSlotPicker(anchor, slot, moduleList) {
+    if (activeSlotKey === slot.key) {
+      hideTooltip();
+      return;
+    }
     activeSlotKey = slot.key;
-    tooltipList.innerHTML = '';
     const currentIme = slotModules[slot.key] || slot.defaultIme;
-    moduleList.forEach(name => {
+    tooltipList.innerHTML = '';
+    moduleList.forEach((name) => {
       const item = document.createElement('div');
       item.className = 'preset-mod-item' + (name === currentIme ? ' selected' : '');
-      item.textContent = name.replace(/_/g, ' ');
+      item.textContent = name.replace(/_gola$/, '').replace(/_/g, ' ');
       item.addEventListener('click', (e) => {
         e.stopPropagation();
         slotModules[slot.key] = name;
         hideTooltip();
-        renderLayout();
+        renderPlanView();
       });
       tooltipList.appendChild(item);
     });
 
-    // position tooltip near the slot
-    const rect = el.getBoundingClientRect();
+    // Position popover relative to viewport, prefer below
     tooltip.classList.remove('hidden');
-    // try below first, flip up if needed
+    const rect = anchor.getBoundingClientRect();
+    const popH = tooltip.offsetHeight || 240;
+    const popW = tooltip.offsetWidth || 200;
     let top = rect.bottom + 6;
-    if (top + 260 > window.innerHeight) top = rect.top - 260;
-    let left = rect.left;
-    if (left + 200 > window.innerWidth) left = window.innerWidth - 206;
-    tooltip.style.top  = top  + 'px';
+    let left = rect.left + rect.width / 2 - popW / 2;
+    if (top + popH > window.innerHeight - 8) top = rect.top - popH - 6;
+    if (left + popW > window.innerWidth - 8) left = window.innerWidth - popW - 8;
+    if (left < 8) left = 8;
+    tooltip.style.top = top + 'px';
     tooltip.style.left = left + 'px';
   }
 
@@ -774,21 +841,18 @@ function initPresetModal() {
   }
 
   document.addEventListener('click', (e) => {
+    if (modal.classList.contains('hidden')) return;
     if (!tooltip.contains(e.target)) hideTooltip();
   });
 
-  // ── apply preset ───────────────────────────────────────────────────────────
+  // ── apply / open / close ───────────────────────────────────────────────────
   function applyAndClose() {
     const opts = getOpts();
-    const { isGola, leftCount, rightCount } = opts;
-    const suf = isGola ? '_gola' : '';
-
-    // Build the dynamic plan using current options
-    const dynamicPlan = buildDynamicPlan(activePresetId, { ...opts, slotModules, suf });
+    const dynamicPlan = buildDynamicPlan(activePresetId, { ...opts, slotModules, suf: opts.isGola ? '_gola' : '' });
 
     pushHistory();
     const newOccupied = {};
-    dynamicPlan.forEach(item => {
+    dynamicPlan.forEach((item) => {
       if (item.mat_pos) newOccupied[`${item.mat_pos[0]},${item.mat_pos[1]}`] = { sirina: item.sirina, ime: item.ime };
     });
     state.plan = JSON.parse(JSON.stringify(dynamicPlan));
@@ -804,27 +868,28 @@ function initPresetModal() {
     closeModal();
   }
 
+  function openModal() {
+    modal.classList.remove('hidden');
+    selectShape(activePresetId);
+  }
   function closeModal() {
     modal.classList.add('hidden');
     hideTooltip();
-    showStep1();
   }
 
-  // ── wire up ────────────────────────────────────────────────────────────────
   addBtn.addEventListener('click', applyAndClose);
-  backBtn.addEventListener('click', showStep1);
-  btnPresets.addEventListener('click', () => { showStep1(); modal.classList.remove('hidden'); });
+  btnPresets.addEventListener('click', openModal);
   closeBtn?.addEventListener('click', closeModal);
   cancelBtn?.addEventListener('click', closeModal);
   modal.querySelector('.modal-backdrop')?.addEventListener('click', closeModal);
 }
 
 function initLanguageSwitcher() {
-  document.querySelectorAll('.lang-btn').forEach(btn => {
+  document.querySelectorAll('.lang-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       const lang = btn.dataset.lang;
       setLocale(lang);
-      document.querySelectorAll('.lang-btn').forEach(b => b.classList.toggle('active', b.dataset.lang === lang));
+      document.querySelectorAll('.lang-btn').forEach((b) => b.classList.toggle('active', b.dataset.lang === lang));
       updateUILabels();
       initCategoryTabs();
       populateModuleSelect();
@@ -836,12 +901,13 @@ function initLanguageSwitcher() {
 }
 
 function updateUILabels() {
-  document.querySelectorAll('[data-i18n]').forEach(el => {
+  document.querySelectorAll('[data-i18n]').forEach((el) => {
     const key = el.dataset.i18n;
     const localized = t(key);
     if (localized) {
-      if (el.children.length === 0) { el.textContent = localized; }
-      else {
+      if (el.children.length === 0) {
+        el.textContent = localized;
+      } else {
         for (let node of el.childNodes) {
           if (node.nodeType === 3 && node.textContent.trim().length > 0) node.textContent = localized;
         }
@@ -850,16 +916,26 @@ function updateUILabels() {
   });
   const searchEl = document.getElementById('module-search');
   if (searchEl) searchEl.placeholder = t('ui.searchPlaceholder');
+  const hintEl = document.getElementById('viewer-hint');
+  if (hintEl) {
+    const helpLink = hintEl.querySelector('#hint-help-link');
+    const helpHtml = helpLink ? helpLink.outerHTML : '<a href="#" id="hint-help-link" style="color:var(--accent);text-decoration:underline;">?</a>';
+    hintEl.innerHTML = t('viewerHint') + helpHtml;
+    hintEl.querySelector('#hint-help-link')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      window._showTour?.();
+    });
+  }
 }
 
 function initCategoryTabs() {
   const tabs = document.querySelectorAll('.tab[data-cat]');
-  tabs.forEach(tab => {
+  tabs.forEach((tab) => {
     const cat = tab.dataset.cat;
     const label = t(`categories.${cat}`);
     if (label) tab.textContent = label;
     tab.onclick = () => {
-      tabs.forEach(t => t.classList.remove('active'));
+      tabs.forEach((t) => t.classList.remove('active'));
       tab.classList.add('active');
       state.currentCategory = cat;
       const searchEl = document.getElementById('module-search');
@@ -874,32 +950,65 @@ function initModuleSelect() {
   const searchEl = document.getElementById('module-search');
   if (searchEl) {
     searchEl.addEventListener('input', () => populateModuleSelect());
-    document.querySelectorAll('.tab[data-cat]').forEach(btn => btn.addEventListener('click', () => { searchEl.value = ''; }));
+    searchEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        searchEl.value = '';
+        populateModuleSelect();
+        searchEl.blur();
+      }
+    });
+    document.querySelectorAll('.tab[data-cat]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        searchEl.value = '';
+      }),
+    );
   }
-  document.getElementById('klizac-select').addEventListener('change', e => { state.klizac = e.target.value; });
-  document.getElementById('client-name').addEventListener('input', e => { state.clientName = e.target.value; });
+  document.getElementById('klizac-select').addEventListener('change', (e) => {
+    state.klizac = e.target.value;
+  });
+  document.getElementById('client-name').addEventListener('input', (e) => {
+    state.clientName = e.target.value;
+  });
 }
 
 function populateModuleSelect() {
   const grid = document.getElementById('module-grid');
   grid.innerHTML = '';
+
+  if (state.currentCategory === 'Custom') {
+    populateCustomModules(grid);
+    return;
+  }
+
   const mods = MODULE_GROUPS[state.currentCategory] || {};
   const searchEl = document.getElementById('module-search');
   const query = (searchEl?.value || '').toLowerCase().replace(/\s+/g, '_');
 
+  let matchCount = 0;
   for (const name of Object.keys(mods)) {
     if (query && !name.toLowerCase().includes(query)) continue;
+    matchCount++;
     const card = document.createElement('div');
     card.className = 'module-card';
     card.setAttribute('role', 'button');
     card.setAttribute('tabindex', '0');
     card.setAttribute('aria-label', name.replace(/_/g, ' '));
-    if (state.selectedModule === name) { card.classList.add('selected'); card.setAttribute('aria-pressed', 'true'); }
-    else card.setAttribute('aria-pressed', 'false');
+    if (state.selectedModule === name) {
+      card.classList.add('selected');
+      card.setAttribute('aria-pressed', 'true');
+    } else card.setAttribute('aria-pressed', 'false');
     card.innerHTML = `${getModuleIconSVG(name)}<div class="module-card-label">${name.replace(/_/g, ' ')}</div>`;
-    card.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); card.click(); } });
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        card.click();
+      }
+    });
     card.addEventListener('click', () => {
-      grid.querySelectorAll('.module-card').forEach(c => { c.classList.remove('selected'); c.setAttribute('aria-pressed', 'false'); });
+      grid.querySelectorAll('.module-card').forEach((c) => {
+        c.classList.remove('selected');
+        c.setAttribute('aria-pressed', 'false');
+      });
       card.classList.add('selected');
       card.setAttribute('aria-pressed', 'true');
       state.selectedModule = name;
@@ -907,6 +1016,13 @@ function populateModuleSelect() {
       refreshParams();
     });
     grid.appendChild(card);
+  }
+
+  if (query && matchCount === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'module-search-empty';
+    empty.textContent = `Nije pronađeno (0)`;
+    grid.appendChild(empty);
   }
 
   const firstKey = Object.keys(mods)[0];
@@ -917,6 +1033,169 @@ function populateModuleSelect() {
     state.selectedModule = '';
   }
   refreshParams();
+}
+
+function populateCustomModules(grid) {
+  const customs = getCustomModules();
+  if (customs.length === 0) {
+    grid.innerHTML =
+      '<div class="module-search-empty">Nema sačuvanih presetova. Desni klik na element u planu → "Save as Preset"</div>';
+    state.selectedModule = '';
+    refreshParams();
+    return;
+  }
+
+  customs.forEach((preset, idx) => {
+    const card = document.createElement('div');
+    card.className = 'module-card';
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
+    card.setAttribute('aria-label', preset.name);
+
+    const del = document.createElement('button');
+    del.className = 'custom-module-delete';
+    del.innerHTML = '×';
+    del.title = 'Obriši preset';
+    del.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteCustomModule(idx);
+      initCustomModulesUI();
+      populateModuleSelect();
+      showNotification('Preset obrisan', 'info');
+    });
+
+    card.innerHTML = `${getModuleIconSVG(preset.ime)}<div class="module-card-label">${preset.name}</div>`;
+    card.appendChild(del);
+    card.addEventListener('click', () => {
+      grid.querySelectorAll('.module-card').forEach((c) => {
+        c.classList.remove('selected');
+      });
+      card.classList.add('selected');
+      state.selectedModule = preset.ime;
+      setEditingPlanIdx(-1);
+      state.paramInputs = { ...preset.p };
+      refreshParamsForCustomPreset(preset);
+    });
+    grid.appendChild(card);
+  });
+
+  if (customs.length > 0 && !state.selectedModule) {
+    state.selectedModule = customs[0].ime;
+    grid.firstChild?.classList.add('selected');
+  }
+  refreshParams();
+}
+
+function refreshParamsForCustomPreset(preset) {
+  const container = document.getElementById('params-container');
+  container.innerHTML = '';
+  let paramDefs = null;
+  for (const cat of Object.values(MODULE_GROUPS)) {
+    if (cat[preset.ime]) {
+      paramDefs = cat[preset.ime];
+      break;
+    }
+  }
+  if (!paramDefs) {
+    container.innerHTML = '<div class="params-empty">Parametri nisu dostupni za ovaj modul</div>';
+    return;
+  }
+
+  paramDefs.forEach(([name]) => {
+    const row = document.createElement('div');
+    row.className = 'param-row';
+    const label = document.createElement('span');
+    label.className = 'param-name';
+    const localized = typeof PARAM_LABELS[name] === 'function' ? PARAM_LABELS[name]() : PARAM_LABELS[name] || name;
+    label.textContent = localized ? `${localized} (${name})` : name;
+    const input = document.createElement('input');
+    input.type = 'number';
+    input.className = 'param-input';
+    input.value = preset.p[name] ?? '';
+    input.step = '1';
+    applyParamInputBounds(input, name);
+    state.paramInputs[name] = preset.p[name] ?? '';
+    input.addEventListener('input', () => {
+      state.paramInputs[name] = input.value;
+    });
+    row.appendChild(label);
+    row.appendChild(input);
+    container.appendChild(row);
+  });
+}
+
+function initCustomModulesUI() {}
+
+// ─── Multi-Plan Tabs ───────────────────────────────────────────────────────────
+function initPlanTabs() {
+  renderPlanTabs();
+
+  document.getElementById('btn-add-plan-tab')?.addEventListener('click', () => {
+    saveCurrentTab(state.plan, state.occupiedCells, state.wallFixtures);
+    const num = getPlanTabs().length + 1;
+    addTab('Plan ' + num);
+    applyTabData();
+    renderPlanTabs();
+    showNotification('Novi plan kreiran', 'success');
+  });
+}
+
+function renderPlanTabs() {
+  const container = document.getElementById('plan-tabs');
+  if (!container) return;
+  container.innerHTML = '';
+
+  const tabs = getPlanTabs();
+  const active = getActiveTab();
+
+  tabs.forEach((tab, idx) => {
+    const el = document.createElement('button');
+    el.className = 'plan-tab' + (idx === active ? ' active' : '');
+    el.textContent = tab.name;
+    el.title = tab.name;
+    el.addEventListener('click', () => {
+      if (idx === active) return;
+      saveCurrentTab(state.plan, state.occupiedCells, state.wallFixtures);
+      switchTab(idx);
+      applyTabData();
+      renderPlanTabs();
+    });
+
+    if (tabs.length > 1) {
+      const close = document.createElement('span');
+      close.className = 'plan-tab-close';
+      close.innerHTML = '×';
+      close.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!confirm('Obrisati plan "' + tab.name + '"?')) return;
+        saveCurrentTab(state.plan, state.occupiedCells, state.wallFixtures);
+        const newIdx = removeTab(idx);
+        applyTabData();
+        renderPlanTabs();
+        showNotification('Plan obrisan', 'info');
+      });
+      el.appendChild(close);
+    }
+
+    container.appendChild(el);
+  });
+}
+
+function applyTabData() {
+  const data = loadTabData(getActiveTab());
+  if (!data) return;
+  state.plan = data.plan;
+  state.occupiedCells = data.occupiedCells;
+  state.wallFixtures = data.wallFixtures;
+  state.selectedPlanIdx = -1;
+  setEditingPlanIdx(-1);
+  rebuildAllModules();
+  refreshParams();
+  updateWallGridDisplay();
+  renderPlanList();
+  updateTotalCost();
+  clearFixtureMarkers();
+  state.wallFixtures.forEach((f, i) => addFixtureMarker(i, f));
 }
 
 export function refreshParams() {
@@ -934,21 +1213,34 @@ export function refreshParams() {
     row.className = 'param-row';
     const label = document.createElement('span');
     label.className = 'param-name';
-    const localized = (typeof PARAM_LABELS[name] === 'function') ? PARAM_LABELS[name]() : (PARAM_LABELS[name] || name);
+    const localized = typeof PARAM_LABELS[name] === 'function' ? PARAM_LABELS[name]() : PARAM_LABELS[name] || name;
     label.textContent = localized ? `${localized} (${name})` : name;
     label.title = localized || name;
     const input = document.createElement('input');
-    input.type = 'number'; input.className = 'param-input'; input.value = defaultVal; input.step = '1';
+    input.type = 'number';
+    input.className = 'param-input';
+    input.value = defaultVal;
+    input.step = '1';
     input.setAttribute('aria-label', localized ? `${localized} (${name})` : name);
     applyParamInputBounds(input, name);
-    input.addEventListener('keydown', e => {
+    input.addEventListener('keydown', (e) => {
       const rows = container.querySelectorAll('.param-input');
-      if (e.key === 'ArrowDown' && idx < rows.length - 1) { rows[idx + 1].focus(); e.preventDefault(); }
-      if (e.key === 'ArrowUp' && idx > 0) { rows[idx - 1].focus(); e.preventDefault(); }
+      if (e.key === 'ArrowDown' && idx < rows.length - 1) {
+        rows[idx + 1].focus();
+        e.preventDefault();
+      }
+      if (e.key === 'ArrowUp' && idx > 0) {
+        rows[idx - 1].focus();
+        e.preventDefault();
+      }
     });
     state.paramInputs[name] = defaultVal;
-    input.addEventListener('input', () => { state.paramInputs[name] = input.value; });
-    row.appendChild(label); row.appendChild(input); container.appendChild(row);
+    input.addEventListener('input', () => {
+      state.paramInputs[name] = input.value;
+    });
+    row.appendChild(label);
+    row.appendChild(input);
+    container.appendChild(row);
   });
 }
 
@@ -958,7 +1250,10 @@ export function refreshParamsForPlanItem(planIdx) {
   setEditingPlanIdx(planIdx);
   let paramDefs = null;
   for (const cat of Object.values(MODULE_GROUPS)) {
-    if (cat[item.ime]) { paramDefs = cat[item.ime]; break; }
+    if (cat[item.ime]) {
+      paramDefs = cat[item.ime];
+      break;
+    }
   }
   if (!paramDefs) return;
 
@@ -974,23 +1269,39 @@ export function refreshParamsForPlanItem(planIdx) {
     row.className = 'param-row';
     const label = document.createElement('span');
     label.className = 'param-name';
-    const localized = (typeof PARAM_LABELS[name] === 'function') ? PARAM_LABELS[name]() : (PARAM_LABELS[name] || name);
+    const localized = typeof PARAM_LABELS[name] === 'function' ? PARAM_LABELS[name]() : PARAM_LABELS[name] || name;
     label.textContent = localized ? `${localized} (${name})` : name;
     label.title = localized || name;
     const input = document.createElement('input');
-    input.type = 'number'; input.className = 'param-input'; input.value = item.p[name] ?? ''; input.step = '1';
+    input.type = 'number';
+    input.className = 'param-input';
+    input.value = item.p[name] ?? '';
+    input.step = '1';
     input.setAttribute('aria-label', localized ? `${localized} (${name})` : name);
     applyParamInputBounds(input, name);
-    input.addEventListener('keydown', e => {
+    input.addEventListener('keydown', (e) => {
       const rows = container.querySelectorAll('.param-input');
-      if (e.key === 'ArrowDown' && idx < rows.length - 1) { rows[idx + 1].focus(); e.preventDefault(); }
-      if (e.key === 'ArrowUp' && idx > 0) { rows[idx - 1].focus(); e.preventDefault(); }
+      if (e.key === 'ArrowDown' && idx < rows.length - 1) {
+        rows[idx + 1].focus();
+        e.preventDefault();
+      }
+      if (e.key === 'ArrowUp' && idx > 0) {
+        rows[idx - 1].focus();
+        e.preventDefault();
+      }
     });
     let _paramSnapshotted = false;
-    input.addEventListener('focus', () => { _paramSnapshotted = false; });
-    input.addEventListener('blur',  () => { _paramSnapshotted = false; });
+    input.addEventListener('focus', () => {
+      _paramSnapshotted = false;
+    });
+    input.addEventListener('blur', () => {
+      _paramSnapshotted = false;
+    });
     input.addEventListener('input', () => {
-      if (!_paramSnapshotted) { pushHistory(); _paramSnapshotted = true; }
+      if (!_paramSnapshotted) {
+        pushHistory();
+        _paramSnapshotted = true;
+      }
       const val = input.value;
       item.p[name] = val;
       const WIDTH_PARAMS = ['s', 'dss', 'sl', 'l'];
@@ -1015,13 +1326,17 @@ export function refreshParamsForPlanItem(planIdx) {
       updateTotalCost();
       autoSave();
     });
-    row.appendChild(label); row.appendChild(input); container.appendChild(row);
+    row.appendChild(label);
+    row.appendChild(input);
+    container.appendChild(row);
   });
 }
 
 export function initToggles() {
-  const grids = [document.getElementById('toggles-grid'), document.getElementById('toggles-grid-popover')].filter(Boolean);
-  grids.forEach(grid => {
+  const grids = [document.getElementById('toggles-grid'), document.getElementById('toggles-grid-popover')].filter(
+    Boolean,
+  );
+  grids.forEach((grid) => {
     grid.innerHTML = '';
     for (const [key, label] of Object.entries(TOGGLE_LABELS)) {
       const item = document.createElement('div');
@@ -1036,11 +1351,17 @@ export function initToggles() {
       const lbl = document.createElement('span');
       lbl.className = 'toggle-label';
       lbl.textContent = label;
-      item.appendChild(sw); item.appendChild(lbl);
-      item.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); item.click(); } });
+      item.appendChild(sw);
+      item.appendChild(lbl);
+      item.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          item.click();
+        }
+      });
       item.addEventListener('click', () => {
         state.settings[key] = !state.settings[key];
-        document.querySelectorAll(`.toggle-item[data-key="${key}"]`).forEach(el => {
+        document.querySelectorAll(`.toggle-item[data-key="${key}"]`).forEach((el) => {
           el.classList.toggle('active', state.settings[key]);
           el.setAttribute('aria-checked', state.settings[key] ? 'true' : 'false');
         });
@@ -1053,13 +1374,20 @@ export function initToggles() {
 }
 
 function initPositionInputs() {
-  ['x', 'y', 'z', 'r'].forEach(axis => {
+  ['x', 'y', 'z', 'r'].forEach((axis) => {
     const el = document.getElementById(`pos-${axis}`);
     let _posSnapshotted = false;
-    el.addEventListener('focus', () => { _posSnapshotted = false; });
-    el.addEventListener('blur',  () => { _posSnapshotted = false; });
-    el.addEventListener('input', e => {
-      if (state.selectedPlanIdx >= 0 && !_posSnapshotted) { pushHistory(); _posSnapshotted = true; }
+    el.addEventListener('focus', () => {
+      _posSnapshotted = false;
+    });
+    el.addEventListener('blur', () => {
+      _posSnapshotted = false;
+    });
+    el.addEventListener('input', (e) => {
+      if (state.selectedPlanIdx >= 0 && !_posSnapshotted) {
+        pushHistory();
+        _posSnapshotted = true;
+      }
       const val = parseFloat(e.target.value) || 0;
       state.position[axis] = val;
       if (state.selectedPlanIdx >= 0) {
@@ -1074,7 +1402,7 @@ function initPositionInputs() {
               const key = `${itemRow},${c}`;
               const cellData = state.occupiedCells[key];
               if (!cellData) continue;
-              const rightItem = state.plan.find(m => m.mat_pos && m.mat_pos[0] === itemRow && m.mat_pos[1] === c);
+              const rightItem = state.plan.find((m) => m.mat_pos && m.mat_pos[0] === itemRow && m.mat_pos[1] === c);
               if (!rightItem) continue;
               rightItem.pos[0] += delta;
               const rightIdx = state.plan.indexOf(rightItem);
@@ -1092,9 +1420,13 @@ function initPositionInputs() {
             }
             rebuildCountertopsForRow(itemRow);
           }
-        } else if (axis === 'y') { item.pos[1] = val; }
-        else if (axis === 'z') { item.pos[2] = val; }
-        else if (axis === 'r') { item.r = val; }
+        } else if (axis === 'y') {
+          item.pos[1] = val;
+        } else if (axis === 'z') {
+          item.pos[2] = val;
+        } else if (axis === 'r') {
+          item.r = val;
+        }
         // Position/rotation change: move existing group, no geometry rebuild needed
         moveModuleGroup(state.selectedPlanIdx, item.pos[0], item.pos[1], item.pos[2], item.r || 0);
         highlightModule(state.selectedPlanIdx);
@@ -1115,7 +1447,7 @@ function getPos() {
     x: parseFloat(document.getElementById('pos-x').value) || 0,
     y: parseFloat(document.getElementById('pos-y').value) || 0,
     z: parseFloat(document.getElementById('pos-z').value) || 0,
-    r: parseFloat(document.getElementById('pos-r').value) || 0
+    r: parseFloat(document.getElementById('pos-r').value) || 0,
   };
 }
 
@@ -1126,6 +1458,7 @@ function initPlanActions() {
   document.getElementById('btn-krojna').addEventListener('click', showKrojnaLista);
   document.getElementById('btn-optimik').addEventListener('click', exportOptimik);
   document.getElementById('btn-pdf').addEventListener('click', exportPdf);
+  document.getElementById('btn-client-pdf').addEventListener('click', exportClientPdf);
 
   const btnToggleMat = document.getElementById('btn-toggle-materials');
   const matPanel = document.getElementById('materials-panel');
@@ -1134,14 +1467,13 @@ function initPlanActions() {
   const btnRadna = document.getElementById('btn-radna');
   btnRadna.addEventListener('click', () => {
     state.addingRadnaPloca = !state.addingRadnaPloca;
+    btnRadna.classList.toggle('is-active-mode', state.addingRadnaPloca);
     if (state.addingRadnaPloca) {
       state.radnaPlocaSelection = [];
-      btnRadna.style.backgroundColor = 'var(--accent)'; btnRadna.style.color = '#fff';
       showNotification('Dvoklikni na pocetni element, a zatim na krajnji element za spajanje radne ploce.', 'info');
     } else {
       state.radnaPlocaSelection = [];
-      import('./viewer.js').then(v => v.highlightModule(-1));
-      btnRadna.style.backgroundColor = ''; btnRadna.style.color = '';
+      import('./viewer.js').then((v) => v.highlightModule(-1));
       showNotification('Izasao si iz moda za dodavanje radne ploce.', 'info');
     }
   });
@@ -1149,14 +1481,13 @@ function initPlanActions() {
   document.getElementById('btn-cokla').addEventListener('click', () => {
     state.addingCokla = !state.addingCokla;
     const btnCokla = document.getElementById('btn-cokla');
+    btnCokla.classList.toggle('is-active-mode', state.addingCokla);
     if (state.addingCokla) {
       state.coklaSelection = [];
-      btnCokla.style.backgroundColor = 'var(--accent)'; btnCokla.style.color = '#fff';
       showNotification('Dvoklikni na pocetni element, a zatim na krajnji element za spajanje cokle.', 'info');
     } else {
       state.coklaSelection = [];
-      import('./viewer.js').then(v => v.highlightModule(-1));
-      btnCokla.style.backgroundColor = ''; btnCokla.style.color = '';
+      import('./viewer.js').then((v) => v.highlightModule(-1));
       showNotification('Izasao si iz moda za dodavanje cokle.', 'info');
     }
   });
@@ -1168,33 +1499,75 @@ function initPlanActions() {
 
   const btnLight = document.getElementById('btn-toggle-light');
   if (btnLight) {
-    btnLight.style.filter = state.lightingMode === 'warm' ? 'sepia(0.6) saturate(2)' : 'none';
+    btnLight.classList.toggle('light-warm', state.lightingMode === 'warm');
     btnLight.addEventListener('click', () => {
       state.lightingMode = state.lightingMode === 'cool' ? 'warm' : 'cool';
       setLightingMode(state.lightingMode);
-      btnLight.style.filter = state.lightingMode === 'warm' ? 'sepia(0.6) saturate(2)' : 'none';
+      btnLight.classList.toggle('light-warm', state.lightingMode === 'warm');
       showNotification('Osvjetljenje: ' + (state.lightingMode === 'warm' ? 'Toplo' : 'Hladno'), 'info');
+    });
+  }
+
+  const btnPbr = document.getElementById('btn-toggle-pbr');
+  if (btnPbr) {
+    btnPbr.addEventListener('click', () => {
+      const next = !isPBRMode();
+      setPBRMode(next);
+      btnPbr.classList.toggle('active', next);
+      showNotification(next ? 'Fotorealistični prikaz uključen' : 'Standardni prikaz', 'info');
     });
   }
 
   const btnPrikaz = document.getElementById('btn-toggle-prikaz');
   const popover = document.getElementById('prikaz-popover');
   if (btnPrikaz && popover) {
-    btnPrikaz.onclick = (e) => { e.stopPropagation(); popover.classList.toggle('hidden'); };
+    btnPrikaz.onclick = (e) => {
+      e.stopPropagation();
+      popover.classList.toggle('hidden');
+    };
     document.addEventListener('click', (e) => {
       if (!popover.contains(e.target) && !btnPrikaz.contains(e.target)) popover.classList.add('hidden');
     });
   }
 
-  document.addEventListener('keydown', e => {
+  document.addEventListener('keydown', (e) => {
     const inInput = document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA';
-    if (e.key === 'z' && (e.ctrlKey || e.metaKey) && !e.shiftKey) { e.preventDefault(); historyUndo(); return; }
-    if ((e.key === 'y' && (e.ctrlKey || e.metaKey)) || (e.key === 'z' && (e.ctrlKey || e.metaKey) && e.shiftKey) || (e.key === 'Z' && (e.ctrlKey || e.metaKey))) { e.preventDefault(); historyRedo(); return; }
-    if ((e.key === 'Delete' || e.key === 'Backspace') && !inInput && state.selectedPlanIdx >= 0) { deleteModule(state.selectedPlanIdx); return; }
-    if (e.key === 's' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveProject(); return; }
-    if (e.key === 'd' && (e.ctrlKey || e.metaKey) && !inInput && state.selectedPlanIdx >= 0) { e.preventDefault(); duplicateModule(state.selectedPlanIdx); return; }
+    if (e.key === 'z' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      e.preventDefault();
+      historyUndo();
+      return;
+    }
+    if (
+      (e.key === 'y' && (e.ctrlKey || e.metaKey)) ||
+      (e.key === 'z' && (e.ctrlKey || e.metaKey) && e.shiftKey) ||
+      (e.key === 'Z' && (e.ctrlKey || e.metaKey))
+    ) {
+      e.preventDefault();
+      historyRedo();
+      return;
+    }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && !inInput && state.selectedPlanIdx >= 0) {
+      deleteModule(state.selectedPlanIdx);
+      return;
+    }
+    if ((e.key === 'r' || e.key === 'R') && !inInput && state.selectedPlanIdx >= 0) {
+      mirrorModule(state.selectedPlanIdx);
+      return;
+    }
+    if (e.key === 's' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      saveProject();
+      return;
+    }
+    if (e.key === 'd' && (e.ctrlKey || e.metaKey) && !inInput && state.selectedPlanIdx >= 0) {
+      e.preventDefault();
+      duplicateModule(state.selectedPlanIdx);
+      return;
+    }
     if (e.key === 'Escape') {
       document.getElementById('ctx-menu')?.classList.add('hidden');
+      document.querySelectorAll('.modal:not(.hidden)').forEach((m) => m.classList.add('hidden'));
+      document.querySelectorAll('.viewer-popover:not(.hidden)').forEach((p) => p.classList.add('hidden'));
       if (state.selectedPlanIdx >= 0) {
         state.selectedPlanIdx = -1;
         setEditingPlanIdx(-1);
@@ -1213,14 +1586,20 @@ function initPlanActions() {
 }
 
 function historyUndo() {
-  if (_history.past.length === 0) { showNotification('Nema vise koraka za ponistiti', 'info'); return; }
+  if (_history.past.length === 0) {
+    showNotification('Nema vise koraka za ponistiti', 'info');
+    return;
+  }
   _history.future.push(_clonePlanState());
   _applySnapshot(_history.past.pop());
   showNotification('Ponisteno (' + _history.past.length + ' preostalo)', 'info');
 }
 
 function historyRedo() {
-  if (_history.future.length === 0) { showNotification('Nema vise koraka za ponavljanje', 'info'); return; }
+  if (_history.future.length === 0) {
+    showNotification('Nema vise koraka za ponavljanje', 'info');
+    return;
+  }
   _history.past.push(_clonePlanState());
   _applySnapshot(_history.future.pop());
   showNotification('Ponavljeno (' + _history.future.length + ' preostalo)', 'info');
@@ -1229,6 +1608,10 @@ function historyRedo() {
 function _applySnapshot(snapshot) {
   state.plan = snapshot.plan;
   state.occupiedCells = snapshot.occupiedCells;
+  if (snapshot.materials) {
+    state.materials = snapshot.materials;
+    import('./material-picker.js').then((m) => m.refreshMaterialSwatches());
+  }
   state.selectedPlanIdx = -1;
   setEditingPlanIdx(-1);
   rebuildAllModules();
@@ -1243,28 +1626,34 @@ function initFixtureModal() {
   const popover = document.getElementById('fixture-popover');
   const btnOpen = document.getElementById('btn-add-fixture');
   if (btnOpen && popover) {
-    btnOpen.onclick = (e) => { e.stopPropagation(); popover.classList.toggle('hidden'); if (!popover.classList.contains('hidden')) renderFixtureList(); };
-    document.addEventListener('click', (e) => { if (!popover.contains(e.target) && !btnOpen.contains(e.target)) popover.classList.add('hidden'); });
+    btnOpen.onclick = (e) => {
+      e.stopPropagation();
+      popover.classList.toggle('hidden');
+      if (!popover.classList.contains('hidden')) renderFixtureList();
+    };
+    document.addEventListener('click', (e) => {
+      if (!popover.contains(e.target) && !btnOpen.contains(e.target)) popover.classList.add('hidden');
+    });
   }
   const typeSel = document.getElementById('fixture-type-select');
   const dimsRow = document.getElementById('fixture-dims-row');
   if (typeSel) {
-    typeSel.innerHTML = FIXTURE_TYPES.map(t => `<option value="${t.id}">${t.icon} ${t.label}</option>`).join('');
+    typeSel.innerHTML = FIXTURE_TYPES.map((t) => `<option value="${t.id}">${t.icon} ${t.label}</option>`).join('');
     typeSel.addEventListener('change', () => {
-      const isRect = (typeSel.value === 'window' || typeSel.value === 'door');
+      const isRect = typeSel.value === 'window' || typeSel.value === 'door';
       if (dimsRow) dimsRow.classList.toggle('hidden', !isRect);
     });
   }
   document.getElementById('modal-fixture-add')?.addEventListener('click', () => {
     const typeId = typeSel.value;
-    const typeDef = FIXTURE_TYPES.find(t => t.id === typeId);
+    const typeDef = FIXTURE_TYPES.find((t) => t.id === typeId);
     if (!typeDef) return;
     const fixture = {
       type: typeId,
       label: document.getElementById('fixture-label-input').value || typeDef.label,
       x: parseFloat(document.getElementById('fixture-x-input').value) || 0,
       y: parseFloat(document.getElementById('fixture-y-input').value) || 0,
-      color: typeDef.color
+      color: typeDef.color,
     };
     if (typeId === 'window' || typeId === 'door') {
       fixture.width = parseFloat(document.getElementById('fixture-width-input').value) || 80;
@@ -1281,13 +1670,15 @@ function renderFixtureList() {
   const wrap = document.getElementById('fixture-list-wrap');
   if (!wrap) return;
   if (state.wallFixtures.length === 0) {
-    wrap.innerHTML = '<div style="font-size:11px;color:var(--text-dim);text-align:center;padding:10px;margin-top:10px;border:1px dashed var(--border);border-radius:8px;">Nema dodanih elemenata</div>';
+    wrap.innerHTML =
+      '<div style="font-size:11px;color:var(--text-dim);text-align:center;padding:10px;margin-top:10px;border:1px dashed var(--border);border-radius:8px;">Nema dodanih elemenata</div>';
     return;
   }
-  let html = '<div style="margin-top:10px;max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:rgba(0,0,0,0.2);">';
+  let html =
+    '<div style="margin-top:10px;max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;background:rgba(0,0,0,0.2);">';
   state.wallFixtures.forEach((f, idx) => {
-    const typeDef = FIXTURE_TYPES.find(t => t.id === f.type);
-    const sizeStr = (f.width && f.height) ? ` (${f.width}x${f.height})` : '';
+    const typeDef = FIXTURE_TYPES.find((t) => t.id === f.type);
+    const sizeStr = f.width && f.height ? ` (${f.width}x${f.height})` : '';
     html += `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid var(--border);font-size:11px;">
       <div style="display:flex;align-items:center;gap:8px;">
         <span style="font-size:14px;">${typeDef ? typeDef.icon : '📍'}</span>
@@ -1307,3 +1698,109 @@ window.removeFixture = (idx) => {
   state.wallFixtures.forEach((f, i) => addFixtureMarker(i, f));
   renderFixtureList();
 };
+
+// ─── First-run Tour ────────────────────────────────────────────────────────────
+function initTour() {
+  if (localStorage.getItem('mecoTourDone') === '1') return;
+
+  const steps = [
+    { target: '#btn-measure', label: 'Mjere', text: 'Prikaži ili sakrij dimenzije odabranog modula u 3D prikazu.' },
+    {
+      target: '#btn-view-front',
+      label: 'Kamera',
+      text: 'Brzo prebaci pogled: sprijeda, izometrija, odozgo ili resetuj kameru.',
+    },
+    {
+      target: '#btn-toggle-light',
+      label: 'Osvjetljenje',
+      text: 'Prebaci između toplog i hladnog osvjetljenja za bolji uvid u materijale.',
+    },
+    {
+      target: '#btn-toggle-pbr',
+      label: 'Fotorealizam',
+      text: 'Uključi PBR rendering sa HDRI okruženjem za prikaz kvalitetan za klijente.',
+    },
+    {
+      target: '#btn-toggle-prikaz',
+      label: 'Prikaz elemenata',
+      text: 'Uključi/isključi dijelove modula: vrata, police, pozadinu, fioke, radnu ploču.',
+    },
+    {
+      target: '#btn-add-fixture',
+      label: 'Elementi zida',
+      text: 'Dodaj oznake za vodu, struju, prozore, vrata i druge elemente na zidu.',
+    },
+  ];
+
+  const overlay = document.getElementById('tour-overlay');
+  const tooltip = document.getElementById('tour-tooltip');
+  const stepLabel = document.getElementById('tour-step-label');
+  const text = document.getElementById('tour-text');
+  const counter = document.getElementById('tour-counter');
+  const btnNext = document.getElementById('tour-next');
+  const btnSkip = document.getElementById('tour-skip');
+  let current = 0;
+  let prevHighlight = null;
+
+  function cleanup() {
+    if (prevHighlight) prevHighlight.classList.remove('tour-highlight');
+    prevHighlight = null;
+    overlay.classList.add('hidden');
+  }
+
+  function showStep(i) {
+    if (prevHighlight) prevHighlight.classList.remove('tour-highlight');
+    if (i >= steps.length) {
+      cleanup();
+      localStorage.setItem('mecoTourDone', '1');
+      return;
+    }
+    current = i;
+    const step = steps[i];
+    const target = document.querySelector(step.target);
+    if (!target) {
+      showStep(i + 1);
+      return;
+    }
+
+    target.classList.add('tour-highlight');
+    prevHighlight = target;
+
+    stepLabel.textContent = step.label;
+    text.textContent = step.text;
+    counter.textContent = `${i + 1} / ${steps.length}`;
+    btnNext.textContent = i === steps.length - 1 ? 'Gotovo ✓' : 'Sljedeći →';
+
+    overlay.classList.remove('hidden');
+
+    requestAnimationFrame(() => {
+      const rect = target.getBoundingClientRect();
+      const ttW = 280;
+      let left = rect.left + rect.width / 2 - ttW / 2;
+      let top = rect.bottom + 12;
+      if (top + 160 > window.innerHeight) top = rect.top - 160;
+      if (left < 12) left = 12;
+      if (left + ttW > window.innerWidth - 12) left = window.innerWidth - ttW - 12;
+      tooltip.style.left = left + 'px';
+      tooltip.style.top = top + 'px';
+    });
+  }
+
+  btnNext.addEventListener('click', () => showStep(current + 1));
+  btnSkip.addEventListener('click', () => {
+    cleanup();
+    localStorage.setItem('mecoTourDone', '1');
+  });
+  overlay.querySelector('.tour-backdrop').addEventListener('click', () => {
+    cleanup();
+    localStorage.setItem('mecoTourDone', '1');
+  });
+
+  setTimeout(() => showStep(0), 800);
+
+  document.getElementById('hint-help-link')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    localStorage.removeItem('mecoTourDone');
+    showStep(0);
+  });
+}

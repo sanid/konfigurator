@@ -58,38 +58,51 @@ function geom3ToBuffers(geom) {
     if (verts.length < 3) continue;
 
     // Flat normal via cross product of first two edges
-    const ax = verts[1][0] - verts[0][0], ay = verts[1][1] - verts[0][1], az = verts[1][2] - verts[0][2];
-    const bx = verts[2][0] - verts[0][0], by = verts[2][1] - verts[0][1], bz = verts[2][2] - verts[0][2];
+    const ax = verts[1][0] - verts[0][0],
+      ay = verts[1][1] - verts[0][1],
+      az = verts[1][2] - verts[0][2];
+    const bx = verts[2][0] - verts[0][0],
+      by = verts[2][1] - verts[0][1],
+      bz = verts[2][2] - verts[0][2];
     let nx = ay * bz - az * by;
     let ny = az * bx - ax * bz;
     let nz = ax * by - ay * bx;
     const len = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
-    nx /= len; ny /= len; nz /= len;
+    nx /= len;
+    ny /= len;
+    nz /= len;
 
     // Fan triangulation
     for (let j = 1; j < verts.length - 1; j++) {
       posArr.push(
-        verts[0][0], verts[0][1], verts[0][2],
-        verts[j][0], verts[j][1], verts[j][2],
-        verts[j+1][0], verts[j+1][1], verts[j+1][2]
+        verts[0][0],
+        verts[0][1],
+        verts[0][2],
+        verts[j][0],
+        verts[j][1],
+        verts[j][2],
+        verts[j + 1][0],
+        verts[j + 1][1],
+        verts[j + 1][2],
       );
-      normArr.push(
-        nx, ny, nz,
-        nx, ny, nz,
-        nx, ny, nz
-      );
+      normArr.push(nx, ny, nz, nx, ny, nz, nx, ny, nz);
     }
   }
 
   return {
     positions: new Float32Array(posArr),
-    normals: new Float32Array(normArr)
+    normals: new Float32Array(normArr),
   };
 }
 
 // ── Message handler ───────────────────────────────────────────────────────────
 
-self.onmessage = function(e) {
+self.onmessage = function (e) {
+  if (e.data.type === 'ping') {
+    self.postMessage({ type: 'pong' });
+    return;
+  }
+
   const { id, groups } = e.data;
   // groups: Array<{ matKey, specs: GeomSpec[] }>
 

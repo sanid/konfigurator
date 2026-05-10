@@ -69,21 +69,23 @@ export function buildDynamicPlan(presetId, options) {
   const plan = [];
 
   // Height and module suffix for gola vs standard system
-  const v   = isGola ? '88' : '82';
+  const v = isGola ? '88' : '82';
   const suf = isGola ? '_gola' : '';
 
   // Corner element geometry parameters
-  const dss = isGola ? 100 : 80;  // long arm length (along main wall)
-  const lss = isGola ? 80  : 90;  // short arm length (along side wall)
-  const sw  = 60;                  // standard module width
+  const dss = isGola ? 100 : 80; // long arm length (along main wall)
+  const lss = isGola ? 80 : 90; // short arm length (along side wall)
+  const sw = 60; // standard module width
 
   // Standard module parameter objects
-  const pBase   = (s) => ({ s: String(s), v, d: '55', c: '10', brvr: '2', brp: '1', tip_klizaca: 'skriveni' });
-  const pDraw   = (s) => ({ s: String(s), v, d: '55', c: '10', brf: '4', brfp: '2', brfd: '1', tip_klizaca: 'skriveni' });
-  const pCorner = ()  => ({ dss: String(dss), lss: String(lss), v, d: '55', c: '10', brp: '1' });
+  const pBase = (s) => ({ s: String(s), v, d: '55', c: '10', brvr: '2', brp: '1', tip_klizaca: 'skriveni' });
+  const pDraw = (s) => ({ s: String(s), v, d: '55', c: '10', brf: '4', brfp: '2', brfd: '1', tip_klizaca: 'skriveni' });
+  const pCorner = () => ({ dss: String(dss), lss: String(lss), v, d: '55', c: '10', brp: '1' });
 
   // Resolve module name for a slot (user override or default)
-  function slotIme(key, defaultIme) { return slotModules[key] || defaultIme; }
+  function slotIme(key, defaultIme) {
+    return slotModules[key] || defaultIme;
+  }
 
   // Make params from a module name (best-effort: fiokar gets drawer params, else base)
   function pForIme(ime, s) {
@@ -102,16 +104,18 @@ export function buildDynamicPlan(presetId, options) {
     let curX = startX;
     let col = colStart;
     for (let i = 0; i < count; i++) {
-      const s = (i === count - 1) ? remainder : sw;
-      const isMiddle = (count > 1) && (i === Math.floor(count / 2));
+      const s = i === count - 1 ? remainder : sw;
+      const isMiddle = count > 1 && i === Math.floor(count / 2);
       const defaultIme = isMiddle ? 'fiokar' + suf : 'radni_stol' + suf;
       const key = `${slotKeyPrefix}-${i}`;
       const ime = slotIme(key, defaultIme);
       plan.push({
         ime,
         p: pForIme(ime, s),
-        pos: [curX, 0, 0], r: 0,
-        mat_pos: [rowIdx, col++], sirina: s
+        pos: [curX, 0, 0],
+        r: 0,
+        mat_pos: [rowIdx, col++],
+        sirina: s,
       });
       curX += s;
     }
@@ -122,7 +126,7 @@ export function buildDynamicPlan(presetId, options) {
   if (presetId === 'galley') {
     fillMainWall(0, width, 2, 1, 'main');
 
-  // ─── L-SHAPE ───────────────────────────────────────────────────────────────
+    // ─── L-SHAPE ───────────────────────────────────────────────────────────────
   } else if (presetId === 'l-shape') {
     if (side === 'right') {
       // Main wall fills: width - dss (corner long arm takes dss)
@@ -133,8 +137,10 @@ export function buildDynamicPlan(presetId, options) {
       plan.push({
         ime: 'dug_element_90_desni' + suf,
         p: pCorner(),
-        pos: [cornerX, 0, 0], r: 0,
-        mat_pos: [2, plan.length + 1], sirina: dss
+        pos: [cornerX, 0, 0],
+        r: 0,
+        mat_pos: [2, plan.length + 1],
+        sirina: dss,
       });
 
       // Right side wall
@@ -143,19 +149,23 @@ export function buildDynamicPlan(presetId, options) {
         const key = `right-${i}`;
         const ime = slotIme(key, 'radni_stol' + suf);
         plan.push({
-          ime, p: pForIme(ime, sw),
-          pos: [sideX, -(lss + i * sw), 0], r: 90,
-          mat_pos: [3, i + 1], sirina: sw
+          ime,
+          p: pForIme(ime, sw),
+          pos: [sideX, -(lss + i * sw), 0],
+          r: 90,
+          mat_pos: [3, i + 1],
+          sirina: sw,
         });
       }
-
     } else {
       // side === 'left': corner on the left
       plan.push({
         ime: 'dug_element_90' + suf,
         p: pCorner(),
-        pos: [0, 0, 0], r: 0,
-        mat_pos: [2, 1], sirina: dss
+        pos: [0, 0, 0],
+        r: 0,
+        mat_pos: [2, 1],
+        sirina: dss,
       });
 
       // Main wall from X=dss
@@ -166,21 +176,26 @@ export function buildDynamicPlan(presetId, options) {
         const key = `left-${i}`;
         const ime = slotIme(key, 'radni_stol' + suf);
         plan.push({
-          ime, p: pForIme(ime, sw),
-          pos: [0, -(lss + (i + 1) * sw), 0], r: 270,
-          mat_pos: [1, i + 1], sirina: sw
+          ime,
+          p: pForIme(ime, sw),
+          pos: [0, -(lss + (i + 1) * sw), 0],
+          r: 270,
+          mat_pos: [1, i + 1],
+          sirina: sw,
         });
       }
     }
 
-  // ─── U-SHAPE ───────────────────────────────────────────────────────────────
+    // ─── U-SHAPE ───────────────────────────────────────────────────────────────
   } else if (presetId === 'u-shape') {
     // Left corner
     plan.push({
       ime: 'dug_element_90' + suf,
       p: pCorner(),
-      pos: [0, 0, 0], r: 0,
-      mat_pos: [2, 1], sirina: dss
+      pos: [0, 0, 0],
+      r: 0,
+      mat_pos: [2, 1],
+      sirina: dss,
     });
 
     // Main wall: width - dss - lss
@@ -192,8 +207,10 @@ export function buildDynamicPlan(presetId, options) {
     plan.push({
       ime: 'dug_element_90_desni' + suf,
       p: pCorner(),
-      pos: [rightCornerX, 0, 0], r: 0,
-      mat_pos: [2, plan.length + 1], sirina: dss
+      pos: [rightCornerX, 0, 0],
+      r: 0,
+      mat_pos: [2, plan.length + 1],
+      sirina: dss,
     });
 
     // Left side wall
@@ -201,9 +218,12 @@ export function buildDynamicPlan(presetId, options) {
       const key = `left-${i}`;
       const ime = slotIme(key, 'radni_stol' + suf);
       plan.push({
-        ime, p: pForIme(ime, sw),
-        pos: [0, -(lss + (i + 1) * sw), 0], r: 270,
-        mat_pos: [1, i + 1], sirina: sw
+        ime,
+        p: pForIme(ime, sw),
+        pos: [0, -(lss + (i + 1) * sw), 0],
+        r: 270,
+        mat_pos: [1, i + 1],
+        sirina: sw,
       });
     }
 
@@ -213,9 +233,12 @@ export function buildDynamicPlan(presetId, options) {
       const key = `right-${i}`;
       const ime = slotIme(key, 'radni_stol' + suf);
       plan.push({
-        ime, p: pForIme(ime, sw),
-        pos: [rightWallX, -(lss + i * sw), 0], r: 90,
-        mat_pos: [3, i + 1], sirina: sw
+        ime,
+        p: pForIme(ime, sw),
+        pos: [rightWallX, -(lss + i * sw), 0],
+        r: 90,
+        mat_pos: [3, i + 1],
+        sirina: sw,
       });
     }
   }
@@ -247,7 +270,7 @@ export const PRESET_LAYOUTS = [
       <rect x="60" y="30" width="17" height="18" rx="2" fill="var(--accent)" opacity="0.55"/>
       <line x1="1" y1="28" x2="79" y2="28" stroke="var(--text-secondary)" stroke-width="1" opacity="0.4"/>
     </svg>`,
-    plan: []
+    plan: [],
   },
   {
     id: 'l-shape',
@@ -263,7 +286,7 @@ export const PRESET_LAYOUTS = [
       <line x1="56" y1="8" x2="56" y2="60" stroke="var(--text-secondary)" stroke-width="1" opacity="0.4"/>
       <rect x="45" y="30" width="11" height="13" rx="1.5" fill="var(--accent)" opacity="0.55"/>
     </svg>`,
-    plan: []
+    plan: [],
   },
   {
     id: 'u-shape',
@@ -283,6 +306,6 @@ export const PRESET_LAYOUTS = [
       <rect x="9" y="30" width="11" height="13" rx="1.5" fill="var(--accent)" opacity="0.55"/>
       <rect x="61" y="30" width="11" height="13" rx="1.5" fill="var(--accent)" opacity="0.55"/>
     </svg>`,
-    plan: []
-  }
+    plan: [],
+  },
 ];
